@@ -1,0 +1,7 @@
+GalPHOS_backend/
+.bsp/
+.metals/
+.scala-build/
+**/target/
+**/project/
+**/.bloop/
