@@ -1,0 +1,3 @@
+[submodule "GalPHOS_frontend"]
+	path = GalPHOS_frontend
+	url = https://github.com/gameswu/GalPHOS_frontend.git
