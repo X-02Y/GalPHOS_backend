@@ -229,3 +229,41 @@ case class ApprovedUserDto(
   lastLoginAt: Option[String],
   avatarUrl: Option[String]
 )
+
+// 个人资料相关模型
+case class UserProfile(
+  id: String,
+  username: String,
+  phone: Option[String],
+  role: String,
+  province: Option[String],
+  school: Option[String],
+  avatarUrl: Option[String],
+  createdAt: Option[String],
+  lastLoginAt: Option[String]
+)
+
+case class UpdateProfileRequest(
+  phone: Option[String] = None,
+  province: Option[String] = None,
+  school: Option[String] = None,
+  avatarUrl: Option[String] = None
+)
+
+case class ChangePasswordRequest(
+  currentPassword: String,
+  newPassword: String,
+  confirmPassword: String
+)
+
+case class AdminProfile(
+  id: String,
+  username: String,
+  createdAt: Option[String],
+  lastLoginAt: Option[String]
+)
+
+case class UpdateAdminProfileRequest(
+  // 管理员可能只需要更新一些基本信息
+  avatarUrl: Option[String] = None
+)

@@ -18,6 +18,13 @@ trait UserManagementService {
   def getUsersByRole(role: UserRole, status: Option[UserStatus] = None): IO[List[ApprovedUser]]
   // 新增：获取学生注册申请（只包含有教练关联的）
   def getStudentRegistrationRequests(): IO[List[StudentRegistrationRequest]]
+  
+  // 个人资料管理相关方法
+  def getUserProfile(username: String): IO[Option[UserProfile]]
+  def updateUserProfile(username: String, request: UpdateProfileRequest): IO[Unit]
+  def getAdminProfile(username: String): IO[Option[AdminProfile]]
+  def updateAdminProfile(username: String, request: UpdateAdminProfileRequest): IO[Unit]
+  def changeUserPassword(username: String, request: ChangePasswordRequest): IO[Unit]
 }
 
 class UserManagementServiceImpl() extends UserManagementService {
@@ -314,6 +321,147 @@ class UserManagementServiceImpl() extends UserManagementService {
     IO.pure(List.empty)
   }
 
+  // 个人资料管理相关方法实现
+  override def getUserProfile(username: String): IO[Option[UserProfile]] = {
+    val sql = s"""
+      SELECT 
+        u.user_id as id,
+        u.username,
+        u.phone,
+        u.role,
+        p.name as province,
+        s.name as school,
+        u.avatar_url as avatarUrl,
+        u.created_at as createdAt,
+        u.updated_at as lastLoginAt
+      FROM authservice.user_table u
+      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
+      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
+      WHERE u.username = ?
+    """.stripMargin
+
+    val params = List(SqlParameter("String", username))
+
+    for {
+      result <- DatabaseManager.executeQueryOptional(sql, params)
+    } yield result.map(convertToUserProfile)
+  }
+
+  override def updateUserProfile(username: String, request: UpdateProfileRequest): IO[Unit] = {
+    // 构建动态更新SQL
+    val updateFields = scala.collection.mutable.ListBuffer[String]()
+    val sqlParams = scala.collection.mutable.ListBuffer[SqlParameter]()
+
+    request.phone.foreach { phone =>
+      updateFields += "phone = ?"
+      sqlParams += SqlParameter("String", phone)
+    }
+
+    request.province.foreach { province =>
+      // 需要先查找省份ID
+      updateFields += "province_id = (SELECT province_id FROM authservice.province_table WHERE name = ?)"
+      sqlParams += SqlParameter("String", province)
+    }
+
+    request.school.foreach { school =>
+      // 需要先查找学校ID
+      updateFields += "school_id = (SELECT school_id FROM authservice.school_table WHERE name = ?)"
+      sqlParams += SqlParameter("String", school)
+    }
+
+    request.avatarUrl.foreach { avatarUrl =>
+      updateFields += "avatar_url = ?"
+      sqlParams += SqlParameter("String", avatarUrl)
+    }
+
+    if (updateFields.isEmpty) {
+      IO.unit // 没有需要更新的字段
+    } else {
+      updateFields += "updated_at = NOW()"
+      sqlParams += SqlParameter("String", username)
+
+      val sql = s"""
+        UPDATE authservice.user_table 
+        SET ${updateFields.mkString(", ")}
+        WHERE username = ?
+      """.stripMargin
+
+      for {
+        rowsAffected <- DatabaseManager.executeUpdate(sql, sqlParams.toList)
+        _ <- if (rowsAffected == 0) {
+          IO.raiseError(new RuntimeException(s"用户不存在或更新失败: $username"))
+        } else {
+          IO.unit
+        }
+        _ = logger.info(s"用户资料更新完成: username=$username")
+      } yield ()
+    }
+  }
+
+  override def getAdminProfile(username: String): IO[Option[AdminProfile]] = {
+    val sql = s"""
+      SELECT 
+        admin_id as id,
+        username,
+        created_at as createdAt,
+        created_at as lastLoginAt
+      FROM authservice.admin_table
+      WHERE username = ?
+    """.stripMargin
+
+    val params = List(SqlParameter("String", username))
+
+    for {
+      result <- DatabaseManager.executeQueryOptional(sql, params)
+    } yield result.map(convertToAdminProfile)
+  }
+
+  override def updateAdminProfile(username: String, request: UpdateAdminProfileRequest): IO[Unit] = {
+    // 管理员资料更新比较简单，只允许更新头像等基本信息
+    val updateFields = scala.collection.mutable.ListBuffer[String]()
+    val sqlParams = scala.collection.mutable.ListBuffer[SqlParameter]()
+
+    request.avatarUrl.foreach { avatarUrl =>
+      updateFields += "avatar_url = ?"
+      sqlParams += SqlParameter("String", avatarUrl)
+    }
+
+    if (updateFields.isEmpty) {
+      IO.unit // 没有需要更新的字段
+    } else {
+      sqlParams += SqlParameter("String", username)
+
+      val sql = s"""
+        UPDATE authservice.admin_table 
+        SET ${updateFields.mkString(", ")}
+        WHERE username = ?
+      """.stripMargin
+
+      for {
+        rowsAffected <- DatabaseManager.executeUpdate(sql, sqlParams.toList)
+        _ <- if (rowsAffected == 0) {
+          IO.raiseError(new RuntimeException(s"管理员不存在或更新失败: $username"))
+        } else {
+          IO.unit
+        }
+        _ = logger.info(s"管理员资料更新完成: username=$username")
+      } yield ()
+    }
+  }
+
+  override def changeUserPassword(username: String, request: ChangePasswordRequest): IO[Unit] = {
+    // 密码修改需要验证当前密码并更新新密码
+    if (request.newPassword != request.confirmPassword) {
+      IO.raiseError(new RuntimeException("新密码与确认密码不匹配"))
+    } else {
+      // 这里需要调用认证服务的密码修改功能
+      // 由于我们在用户管理服务中，可能需要通过HTTP调用认证服务
+      // 或者直接访问数据库进行密码验证和更新
+      IO.raiseError(new RuntimeException("密码修改功能需要与认证服务集成"))
+    }
+  }
+
+  // 转换方法
   private def convertToPendingUser(json: io.circe.Json): PendingUser = {
     try {
       val roleStr = DatabaseManager.decodeFieldUnsafe[String](json, "role")
@@ -340,60 +488,35 @@ class UserManagementServiceImpl() extends UserManagementService {
     // 添加调试日志
     logger.info(s"转换ApprovedUser，JSON数据: $json")
     
-    // 尝试先解码为LocalDateTime，如果失败再尝试字符串（支持小写字段名）
-    val approvedAtOpt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "approvedat").orElse(
-      DatabaseManager.decodeFieldOptional[LocalDateTime](json, "approvedAt")
-    ).orElse {
-      DatabaseManager.decodeFieldOptional[String](json, "approvedat").orElse(
-        DatabaseManager.decodeFieldOptional[String](json, "approvedAt")
-      ).flatMap { str =>
-        if (str.nonEmpty && str != "null") {
-          try {
-            logger.info(s"解析approvedAt字符串: '$str'")
-            // 处理数据库时间戳格式 "2025-06-28 19:46:22.726852"
-            val cleanedStr = if (str.contains('.')) {
-              // 移除毫秒部分并转换为ISO格式
-              str.replace(' ', 'T').take(19)
-            } else {
-              str.replace(' ', 'T')
-            }
-            Some(LocalDateTime.parse(cleanedStr))
-          } catch {
-            case e: Exception =>
-              logger.error(s"解析approvedAt失败: ${e.getMessage}, 原始值: '$str'")
-              None
-          }
-        } else {
-          logger.info("approvedAt字段为空或null，返回None")
-          None
+    // 直接解码字符串格式的审核时间
+    val approvedAtOpt = DatabaseManager.decodeFieldOptional[String](json, "approvedat").flatMap { str =>
+      if (str.nonEmpty && str != "null") {
+        try {
+          logger.info(s"解析approvedAt字符串: '$str'")
+          Some(LocalDateTime.parse(str))
+        } catch {
+          case e: Exception =>
+            logger.error(s"解析approvedAt失败: ${e.getMessage}, 原始值: '$str'")
+            None
         }
+      } else {
+        logger.info("approvedAt字段为空或null，返回None")
+        None
       }
     }
     
-    // 解码最后登录时间（支持小写字段名）
-    val lastLoginAtOpt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").orElse(
-      DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastLoginAt")
-    ).orElse {
-      DatabaseManager.decodeFieldOptional[String](json, "lastloginat").orElse(
-        DatabaseManager.decodeFieldOptional[String](json, "lastLoginAt")
-      ).flatMap { str =>
-        if (str.nonEmpty && str != "null") {
-          try {
-            // 处理数据库时间戳格式
-            val cleanedStr = if (str.contains('.')) {
-              str.replace(' ', 'T').take(19)
-            } else {
-              str.replace(' ', 'T')
-            }
-            Some(LocalDateTime.parse(cleanedStr))
-          } catch {
-            case e: Exception =>
-              logger.error(s"解析lastLoginAt失败: ${e.getMessage}, 原始值: '$str'")
-              None
-          }
-        } else {
-          None
+    // 解码最后登录时间
+    val lastLoginAtOpt = DatabaseManager.decodeFieldOptional[String](json, "lastloginat").flatMap { str =>
+      if (str.nonEmpty && str != "null") {
+        try {
+          Some(LocalDateTime.parse(str))
+        } catch {
+          case e: Exception =>
+            logger.error(s"解析lastLoginAt失败: ${e.getMessage}, 原始值: '$str'")
+            None
         }
+      } else {
+        None
       }
     }
     
@@ -409,31 +532,47 @@ class UserManagementServiceImpl() extends UserManagementService {
       status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
       approvedAt = approvedAtOpt,
       lastLoginAt = lastLoginAtOpt,
-      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl").orElse(
-        DatabaseManager.decodeFieldOptional[String](json, "avatarUrl")
-      )
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
     )
   }
 
   private def convertToStudentRegistrationRequest(json: io.circe.Json): StudentRegistrationRequest = {
-    try {
-      StudentRegistrationRequest(
-        id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-        username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
-        province = DatabaseManager.decodeFieldUnsafe[String](json, "province"),
-        school = DatabaseManager.decodeFieldUnsafe[String](json, "school"),
-        coachUsername = DatabaseManager.decodeFieldOptional[String](json, "coach_username"),
-        reason = DatabaseManager.decodeFieldOptional[String](json, "reason"),
-        status = DatabaseManager.decodeFieldUnsafe[String](json, "status"),
-        createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "created_at").getOrElse(LocalDateTime.now()),
-        reviewedBy = DatabaseManager.decodeFieldOptional[String](json, "reviewed_by"),
-        reviewedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "reviewed_at"),
-        reviewNote = DatabaseManager.decodeFieldOptional[String](json, "review_note")
-      )
-    } catch {
-      case e: Exception =>
-        logger.error(s"转换StudentRegistrationRequest失败: ${e.getMessage}, JSON: $json")
-        throw e
-    }
+    StudentRegistrationRequest(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      province = DatabaseManager.decodeFieldUnsafe[String](json, "province"),
+      school = DatabaseManager.decodeFieldUnsafe[String](json, "school"),
+      coachUsername = DatabaseManager.decodeFieldOptional[String](json, "coach_username"),
+      reason = DatabaseManager.decodeFieldOptional[String](json, "reason"),
+      status = DatabaseManager.decodeFieldUnsafe[String](json, "status"),
+      createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "created_at").getOrElse(LocalDateTime.now()),
+      reviewedBy = DatabaseManager.decodeFieldOptional[String](json, "reviewed_by"),
+      reviewedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "reviewed_at"),
+      reviewNote = DatabaseManager.decodeFieldOptional[String](json, "review_note")
+    )
+  }
+
+  // 辅助转换方法
+  private def convertToUserProfile(json: io.circe.Json): UserProfile = {
+    UserProfile(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+      role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")).value,
+      province = DatabaseManager.decodeFieldOptional[String](json, "province"),
+      school = DatabaseManager.decodeFieldOptional[String](json, "school"),
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl"),
+      createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
+      lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString)
+    )
+  }
+
+  private def convertToAdminProfile(json: io.circe.Json): AdminProfile = {
+    AdminProfile(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
+      lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString)
+    )
   }
 }
