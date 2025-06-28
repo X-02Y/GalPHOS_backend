@@ -54,6 +54,10 @@ class RegionController(regionService: RegionService, authService: AuthService) {
   
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     
+    // Health check endpoint
+    case GET -> Root / "health" =>
+      Ok("OK")
+    
     // Public endpoint for getting provinces and schools (used in registration)
     case GET -> Root / "api" / "regions" / "provinces-schools" =>
       regionService.getProvincesAndSchools().flatMap { response =>

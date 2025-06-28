@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  exam-service:
+    build: .
+    ports:
+      - "3003:3003"
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m
+    depends_on:
+      - postgres
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    networks:
+      - galphos-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: exam_service
+      POSTGRES_USER: db
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_database.sql:/docker-entrypoint-initdb.d/init_database.sql
+    networks:
+      - galphos-network
+
+volumes:
+  postgres_data:
+
+networks:
+  galphos-network:
+    external: true

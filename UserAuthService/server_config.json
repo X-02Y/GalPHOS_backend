@@ -10,7 +10,7 @@
   "password": "root",
   "prepStmtCacheSize": 250,
   "prepStmtCacheSqlLimit":  2048,
-  "maximumPoolSize": 10,
+  "maximumPoolSize": 3,
   "connectionLiveMinutes": 10,
   "isTest": false
 }

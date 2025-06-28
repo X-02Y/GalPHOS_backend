@@ -60,22 +60,22 @@ CREATE TRIGGER update_region_change_requests_updated_at BEFORE UPDATE ON region_
 
 -- Insert some initial data
 INSERT INTO provinces (name) VALUES 
-    ('北京市'),
-    ('上海市'),
-    ('广东省'),
-    ('浙江省'),
-    ('江苏省'),
-    ('山东省'),
-    ('四川省'),
-    ('湖北省'),
-    ('河南省'),
-    ('湖南省');
+    ('Beijing'),
+    ('Shanghai'),
+    ('Guangdong'),
+    ('Zhejiang'),
+    ('Jiangsu'),
+    ('Shandong'),
+    ('Sichuan'),
+    ('Hubei'),
+    ('Henan'),
+    ('Hunan');
 
 -- Insert some schools for testing
 INSERT INTO schools (name, province_id) VALUES 
-    ('北京大学附属中学', (SELECT id FROM provinces WHERE name = '北京市')),
-    ('清华大学附属中学', (SELECT id FROM provinces WHERE name = '北京市')),
-    ('上海中学', (SELECT id FROM provinces WHERE name = '上海市')),
-    ('华东师范大学第二附属中学', (SELECT id FROM provinces WHERE name = '上海市')),
-    ('华南师范大学附属中学', (SELECT id FROM provinces WHERE name = '广东省')),
-    ('深圳中学', (SELECT id FROM provinces WHERE name = '广东省'));
+    ('Beijing University High School', (SELECT id FROM provinces WHERE name = 'Beijing')),
+    ('Tsinghua University High School', (SELECT id FROM provinces WHERE name = 'Beijing')),
+    ('Shanghai High School', (SELECT id FROM provinces WHERE name = 'Shanghai')),
+    ('East China Normal University High School', (SELECT id FROM provinces WHERE name = 'Shanghai')),
+    ('South China Normal University High School', (SELECT id FROM provinces WHERE name = 'Guangdong')),
+    ('Shenzhen High School', (SELECT id FROM provinces WHERE name = 'Guangdong'));

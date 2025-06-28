@@ -28,11 +28,10 @@ object Init {
       userService = new UserServiceImpl()
       adminService = new AdminServiceImpl()
       tokenService = new TokenServiceImpl(config)
-      regionService = new RegionServiceImpl()
       authService = new AuthService(userService, adminService, tokenService)
       
       // 创建控制器
-      authController = new AuthController(authService, regionService)
+      authController = new AuthController(authService)
       
       _ <- IO(logger.info("用户认证服务初始化完成"))
     } yield authController

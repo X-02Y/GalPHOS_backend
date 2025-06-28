@@ -9,7 +9,7 @@ import cats.effect.Resource
 class DatabaseConnection(config: ServerConfig) {
   
   private val hikariConfig = new HikariConfig()
-  hikariConfig.setJdbcUrl(s"${config.jdbcUrl}galphos")
+  hikariConfig.setJdbcUrl(config.jdbcUrl)
   hikariConfig.setUsername(config.username)
   hikariConfig.setPassword(config.password)
   hikariConfig.setMaximumPoolSize(config.maximumPoolSize)

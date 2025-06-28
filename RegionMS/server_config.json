@@ -3,7 +3,7 @@
   "serverPort": 3007,
   "maximumServerConnection": 10000,
   "maximumClientConnection": 10000,
-  "jdbcUrl": "jdbc:postgresql://localhost:5432/",
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/region_management",
   "username": "db",
   "password": "root",
   "prepStmtCacheSize": 250,

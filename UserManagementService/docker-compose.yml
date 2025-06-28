@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  usermanagement-service:
+    build: .
+    container_name: galphos-usermanagement
+    ports:
+      - "3002:3002"
+    environment:
+      - JAVA_OPTS=-Xmx1g -Xms512m
+    volumes:
+      - ./server_config.json:/app/server_config.json:ro
+    depends_on:
+      - postgres
+    networks:
+      - galphos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: galphos-postgres
+    environment:
+      POSTGRES_DB: galphos
+      POSTGRES_USER: db
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_usermgmt_database.sql:/docker-entrypoint-initdb.d/02_init_usermgmt.sql:ro
+    networks:
+      - galphos-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  galphos-network:
+    external: true
