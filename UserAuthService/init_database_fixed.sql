@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS user_table (
     school_id VARCHAR REFERENCES school_table(school_id),
     avatar_url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP DEFAULT NULL
 );
 
 -- 创建管理员表
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS login_log_table (
 CREATE INDEX IF NOT EXISTS idx_user_table_username ON user_table(username);
 CREATE INDEX IF NOT EXISTS idx_user_table_role ON user_table(role);
 CREATE INDEX IF NOT EXISTS idx_user_table_status ON user_table(status);
+CREATE INDEX IF NOT EXISTS idx_user_table_approved_at ON user_table(approved_at);
 CREATE INDEX IF NOT EXISTS idx_admin_table_username ON admin_table(username);
 CREATE INDEX IF NOT EXISTS idx_token_blacklist_expired_at ON token_blacklist_table(expired_at);
 CREATE INDEX IF NOT EXISTS idx_login_log_user_id ON login_log_table(user_id);

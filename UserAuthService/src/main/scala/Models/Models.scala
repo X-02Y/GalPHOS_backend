@@ -79,10 +79,15 @@ enum UserRole(val value: String):
   case Grader extends UserRole("阅卷者角色")
 
 object UserRole {
-  def fromString(role: String): UserRole = role.toLowerCase match {
+  def fromString(role: String): UserRole = role match {
+    // 支持英文角色名
     case "student" => Student
-    case "coach" => Coach
+    case "coach" => Coach  
     case "grader" => Grader
+    // 支持中文角色名（数据库中存储的格式）
+    case "学生角色" => Student
+    case "教练角色" => Coach
+    case "阅卷者角色" => Grader
     case _ => throw new IllegalArgumentException(s"未知角色: $role")
   }
 

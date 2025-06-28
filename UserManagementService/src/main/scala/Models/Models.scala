@@ -42,7 +42,7 @@ object UserStatus {
     case _ => throw new IllegalArgumentException(s"未知状态: $status")
   }
 
-  implicit val encoder: Encoder[UserStatus] = Encoder.encodeString.contramap(_.value)
+  implicit val encoder: Encoder[UserStatus] = Encoder.encodeString.contramap(_.value.toLowerCase)
   implicit val decoder: Decoder[UserStatus] = Decoder.decodeString.emap { str =>
     try Right(UserStatus.fromString(str))
     catch case _: IllegalArgumentException => Left(s"Invalid status: $str")
@@ -56,10 +56,15 @@ enum UserRole(val value: String):
   case Grader extends UserRole("grader")
 
 object UserRole {
-  def fromString(role: String): UserRole = role.toLowerCase match {
+  def fromString(role: String): UserRole = role match {
+    // 支持英文角色名
     case "student" => Student
     case "coach" => Coach
     case "grader" => Grader
+    // 支持中文角色名（数据库中存储的格式）
+    case "学生角色" => Student
+    case "教练角色" => Coach
+    case "阅卷者角色" => Grader
     case _ => throw new IllegalArgumentException(s"未知角色: $role")
   }
 
@@ -141,13 +146,13 @@ case class StudentRegistrationRequest(
   username: String,
   province: String,
   school: String,
-  coachUsername: String,
-  status: UserStatus,
+  coachUsername: Option[String],
   reason: Option[String],
+  status: String,
   createdAt: LocalDateTime,
-  reviewedBy: Option[String],
-  reviewedAt: Option[LocalDateTime],
-  reviewNote: Option[String]
+  reviewedBy: Option[String] = None,
+  reviewedAt: Option[LocalDateTime] = None,
+  reviewNote: Option[String] = None
 )
 
 // 创建学生注册申请
@@ -201,4 +206,26 @@ case class CoachManagedStudent(
   studentUsername: String,
   studentName: Option[String],
   createdAt: LocalDateTime
+)
+
+// 已审核用户列表响应
+case class ApprovedUsersResponse(
+  users: List[ApprovedUserDto],
+  total: Int,
+  page: Int,
+  limit: Int
+)
+
+// 已审核用户DTO（用于API响应）
+case class ApprovedUserDto(
+  id: String,
+  username: String,
+  phone: Option[String],
+  role: String,
+  province: Option[String],
+  school: Option[String],
+  status: String,
+  approvedAt: Option[String],
+  lastLoginAt: Option[String],
+  avatarUrl: Option[String]
 )

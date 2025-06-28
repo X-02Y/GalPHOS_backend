@@ -106,20 +106,24 @@ object DatabaseManager {
   private def setParameters(stmt: PreparedStatement, params: List[SqlParameter]): Unit = {
     params.zipWithIndex.foreach { case (param, index) =>
       val paramIndex = index + 1
-      param.dataType.toLowerCase match {
-        case "string" => stmt.setString(paramIndex, param.value.toString)
-        case "int" | "integer" => stmt.setInt(paramIndex, param.value.asInstanceOf[Int])
-        case "long" => stmt.setLong(paramIndex, param.value.asInstanceOf[Long])
-        case "double" => stmt.setDouble(paramIndex, param.value.asInstanceOf[Double])
-        case "boolean" => stmt.setBoolean(paramIndex, param.value.asInstanceOf[Boolean])
-        case "timestamp" => 
-          param.value match {
-            case ts: java.sql.Timestamp => stmt.setTimestamp(paramIndex, ts)
-            case ldt: java.time.LocalDateTime => 
-              stmt.setTimestamp(paramIndex, java.sql.Timestamp.valueOf(ldt))
-            case _ => stmt.setString(paramIndex, param.value.toString)
-          }
-        case _ => stmt.setObject(paramIndex, param.value)
+      if (param.value == null) {
+        stmt.setNull(paramIndex, java.sql.Types.NULL)
+      } else {
+        param.dataType.toLowerCase match {
+          case "string" => stmt.setString(paramIndex, param.value.toString)
+          case "int" | "integer" => stmt.setInt(paramIndex, param.value.asInstanceOf[Int])
+          case "long" => stmt.setLong(paramIndex, param.value.asInstanceOf[Long])
+          case "double" => stmt.setDouble(paramIndex, param.value.asInstanceOf[Double])
+          case "boolean" => stmt.setBoolean(paramIndex, param.value.asInstanceOf[Boolean])
+          case "timestamp" => 
+            param.value match {
+              case ts: java.sql.Timestamp => stmt.setTimestamp(paramIndex, ts)
+              case ldt: java.time.LocalDateTime => 
+                stmt.setTimestamp(paramIndex, java.sql.Timestamp.valueOf(ldt))
+              case _ => stmt.setString(paramIndex, param.value.toString)
+            }
+          case _ => stmt.setObject(paramIndex, param.value)
+        }
       }
     }
   }

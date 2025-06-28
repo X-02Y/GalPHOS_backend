@@ -7,6 +7,7 @@ import Config.{ConfigLoader, ServiceConfig}
 import Database.DatabaseManager
 import Services.*
 import Controllers.UserManagementController
+import Process.Init
 import com.comcast.ip4s.*
 
 object UserManagementServiceApp extends IOApp {
@@ -22,6 +23,9 @@ object UserManagementServiceApp extends IOApp {
 
       // 初始化数据库连接池
       _ <- DatabaseManager.initializeDataSource(config.toDatabaseConfig)
+      
+      // 初始化数据库表
+      _ <- Init.initializeDatabase()
 
       // 创建服务实例
       userManagementService = new UserManagementServiceImpl()

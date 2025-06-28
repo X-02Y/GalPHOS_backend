@@ -212,13 +212,11 @@ class UserManagementController(
   private def authenticateUser(req: Request[IO], requiredRole: String)(handler: AuthResult => IO[Response[IO]]): IO[Response[IO]] = {
     extractTokenFromHeader(req) match {
       case Some(token) =>
-        // 这里应该调用认证服务验证普通用户token
-        // 暂时简化实现，实际应该有专门的用户token验证方法
-        authMiddleware.validateAdminToken(token).flatMap { authResult =>
-          if (authResult.success && authResult.userType.contains(requiredRole)) {
+        authMiddleware.validateUserToken(token, Some(requiredRole)).flatMap { authResult =>
+          if (authResult.success) {
             handler(authResult)
           } else {
-            IO.pure(Response[IO](Status.Unauthorized).withEntity(ApiResponse.error(s"权限不足：需要${requiredRole}身份").asJson))
+            IO.pure(Response[IO](Status.Unauthorized).withEntity(ApiResponse.error(authResult.message.getOrElse(s"权限不足：需要${requiredRole}身份")).asJson))
           }
         }.handleErrorWith { error =>
           logger.error("用户身份验证过程出错", error)
@@ -256,7 +254,34 @@ class UserManagementController(
     val queryParams = extractQueryParams(req)
     for {
       result <- userManagementService.getApprovedUsers(queryParams)
-      response <- Ok(ApiResponse.success(result, "获取已审核用户列表成功").asJson)
+      // 转换为API响应格式
+      userDtos = result.items.map { user =>
+        val apiStatus = user.status.value.toLowerCase match {
+          case "active" => "approved"
+          case "disabled" => "rejected"
+          case "pending" => "pending"
+          case other => other
+        }
+        ApprovedUserDto(
+          id = user.id,
+          username = user.username,
+          phone = user.phone,
+          role = user.role.value,
+          province = user.province,
+          school = user.school,
+          status = apiStatus,
+          approvedAt = user.approvedAt.map(_.toString),
+          lastLoginAt = user.lastLoginAt.map(_.toString),
+          avatarUrl = user.avatarUrl
+        )
+      }
+      responseData = ApprovedUsersResponse(
+        users = userDtos,
+        total = result.total,
+        page = result.page,
+        limit = result.limit
+      )
+      response <- Ok(ApiResponse.success(responseData, "获取已审核用户列表成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("获取已审核用户列表失败", error)
@@ -345,8 +370,31 @@ class UserManagementController(
   private def handleGetStudentRegistrations(req: Request[IO]): IO[Response[IO]] = {
     val queryParams = extractQueryParams(req)
     for {
-      result <- userManagementService.getPendingUsers() // 复用现有方法
-      response <- Ok(ApiResponse.success(result, "获取学生注册申请列表成功").asJson)
+      registrationRequests <- userManagementService.getStudentRegistrationRequests()
+      // 转换为前端期望的格式
+      requests = registrationRequests.map { request =>
+        Map(
+          "id" -> request.id,
+          "username" -> request.username,
+          "phone" -> "",  // 注册申请表中没有phone字段
+          "province" -> request.province,
+          "school" -> request.school,
+          "coachUsername" -> request.coachUsername.getOrElse(""),
+          "reason" -> request.reason.getOrElse(""),
+          "status" -> (request.status.toLowerCase match {
+            case "pending" => "pending"
+            case "approved" => "approved" 
+            case "rejected" => "rejected"
+            case other => other
+          }),
+          "createdAt" -> request.createdAt.toString,
+          "reviewedBy" -> request.reviewedBy.getOrElse(""),
+          "reviewedAt" -> request.reviewedAt.map(_.toString).getOrElse(""),
+          "reviewNote" -> request.reviewNote.getOrElse("")
+        )
+      }
+      responseData = Map("requests" -> requests)
+      response <- Ok(ApiResponse.success(responseData, "获取学生注册申请列表成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("获取学生注册申请列表失败", error)

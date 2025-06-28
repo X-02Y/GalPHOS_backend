@@ -75,6 +75,8 @@ class AuthService(
   // 用户注册
   def register(registerReq: RegisterRequest): IO[Either[String, String]] = {
     for {
+      // 添加调试日志
+      _ <- IO(logger.info(s"收到注册请求 - 角色: '${registerReq.role}', 用户名: ${registerReq.username}"))
       // 验证密码一致性
       _ <- if (registerReq.password != registerReq.confirmPassword) {
         IO.raiseError(new IllegalArgumentException("两次密码输入不一致"))
