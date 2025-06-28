@@ -397,7 +397,8 @@ class UserManagementController(
 
   private def handleGetStudentRegionChangeRequests(username: String): IO[Response[IO]] = {
     // TODO: 实现获取学生区域变更申请列表
-    Ok(ApiResponse.success(List.empty[Map[String, Any]], "获取区域变更申请列表成功").asJson)
+    val emptyList: List[String] = List.empty
+    Ok(ApiResponse.success(emptyList, "获取区域变更申请列表成功").asJson)
   }
 
   private def handleGetCoachProfile(username: String): IO[Response[IO]] = {
