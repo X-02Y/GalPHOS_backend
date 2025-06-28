@@ -15,8 +15,7 @@ import Services.*
 import java.util.UUID
 
 class AuthController(
-  authService: AuthService,
-  regionService: RegionService
+  authService: AuthService
 ) {
   private val logger = LoggerFactory.getLogger("AuthController")
 
@@ -51,10 +50,6 @@ class AuthController(
     // 用户登出
     case req @ POST -> Root / "api" / "auth" / "logout" =>
       handleLogout(req).map(_.withHeaders(corsHeaders))
-
-    // 获取省份学校数据
-    case req @ GET -> Root / "api" / "regions" / "provinces-schools" =>
-      handleProvincesSchools(req).map(_.withHeaders(corsHeaders))
 
     // 健康检查
     case GET -> Root / "health" =>
@@ -152,17 +147,6 @@ class AuthController(
   }.handleErrorWith { error =>
     logger.error("登出处理失败", error)
     BadRequest(ApiResponse.error(s"登出失败: ${error.getMessage}").asJson)
-  }
-
-  // 处理获取省份学校数据
-  private def handleProvincesSchools(req: Request[IO]): IO[Response[IO]] = {
-    for {
-      result <- regionService.getAllProvinces()
-      response <- Ok(ApiResponse.success(result, "获取省份学校数据成功").asJson)
-    } yield response
-  }.handleErrorWith { error =>
-    logger.error("获取省份学校数据失败", error)
-    InternalServerError(ApiResponse.error(s"获取省份学校数据失败: ${error.getMessage}").asJson)
   }
 
   // 从请求头提取Token
