@@ -3,5 +3,6 @@ GalPHOS_backend/
 .metals/
 .scala-build/
 **/target/
-**/project/
+project/target/
+project/project/
 **/.bloop/

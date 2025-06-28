@@ -414,28 +414,62 @@ class UserManagementController(
 
   // 个人资料管理相关
   private def handleGetAdminProfile(username: String): IO[Response[IO]] = {
-    // TODO: 实现管理员个人资料获取
-    Ok(ApiResponse.success(Map("username" -> username, "role" -> "admin"), "获取管理员资料成功").asJson)
+    for {
+      profileOpt <- userManagementService.getAdminProfile(username)
+      response <- profileOpt match {
+        case Some(profile) => Ok(ApiResponse.success(profile, "获取管理员资料成功").asJson)
+        case None => NotFound(ApiResponse.error("管理员不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取管理员资料失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleUpdateAdminProfile(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现管理员个人资料更新
-    Ok(ApiResponse.success((), "管理员资料更新成功").asJson)
+    for {
+      updateReq <- req.as[UpdateAdminProfileRequest]
+      _ <- userManagementService.updateAdminProfile(username, updateReq)
+      response <- Ok(ApiResponse.success((), "管理员资料更新成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新管理员资料失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetStudentProfile(username: String): IO[Response[IO]] = {
-    // TODO: 实现学生个人资料获取
-    Ok(ApiResponse.success(Map("username" -> username, "role" -> "student"), "获取学生资料成功").asJson)
+    for {
+      profileOpt <- userManagementService.getUserProfile(username)
+      response <- profileOpt match {
+        case Some(profile) => Ok(ApiResponse.success(profile, "获取学生资料成功").asJson)
+        case None => NotFound(ApiResponse.error("学生不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取学生资料失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleUpdateStudentProfile(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现学生个人资料更新
-    Ok(ApiResponse.success((), "学生资料更新成功").asJson)
+    for {
+      updateReq <- req.as[UpdateProfileRequest]
+      _ <- userManagementService.updateUserProfile(username, updateReq)
+      response <- Ok(ApiResponse.success((), "学生资料更新成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新学生资料失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
   private def handleChangeStudentPassword(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现学生密码修改
-    Ok(ApiResponse.success((), "学生密码修改成功").asJson)
+    for {
+      changeReq <- req.as[ChangePasswordRequest]
+      _ <- userManagementService.changeUserPassword(username, changeReq)
+      response <- Ok(ApiResponse.success((), "学生密码修改成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("修改学生密码失败", error)
+    BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
   private def handleStudentRegionChangeRequest(req: Request[IO], username: String): IO[Response[IO]] = {
@@ -450,13 +484,27 @@ class UserManagementController(
   }
 
   private def handleGetCoachProfile(username: String): IO[Response[IO]] = {
-    // TODO: 实现教练个人资料获取
-    Ok(ApiResponse.success(Map("username" -> username, "role" -> "coach"), "获取教练资料成功").asJson)
+    for {
+      profileOpt <- userManagementService.getUserProfile(username)
+      response <- profileOpt match {
+        case Some(profile) => Ok(ApiResponse.success(profile, "获取教练资料成功").asJson)
+        case None => NotFound(ApiResponse.error("教练不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取教练资料失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleUpdateCoachProfile(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现教练个人资料更新
-    Ok(ApiResponse.success((), "教练资料更新成功").asJson)
+    for {
+      updateReq <- req.as[UpdateProfileRequest]
+      _ <- userManagementService.updateUserProfile(username, updateReq)
+      response <- Ok(ApiResponse.success((), "教练资料更新成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新教练资料失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetCoachManagedStudents(req: Request[IO], coachUsername: String): IO[Response[IO]] = {
@@ -482,18 +530,38 @@ class UserManagementController(
   }
 
   private def handleGetGraderProfile(username: String): IO[Response[IO]] = {
-    // TODO: 实现阅卷员个人资料获取
-    Ok(ApiResponse.success(Map("username" -> username, "role" -> "grader"), "获取阅卷员资料成功").asJson)
+    for {
+      profileOpt <- userManagementService.getUserProfile(username)
+      response <- profileOpt match {
+        case Some(profile) => Ok(ApiResponse.success(profile, "获取阅卷员资料成功").asJson)
+        case None => NotFound(ApiResponse.error("阅卷员不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取阅卷员资料失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleUpdateGraderProfile(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现阅卷员个人资料更新
-    Ok(ApiResponse.success((), "阅卷员资料更新成功").asJson)
+    for {
+      updateReq <- req.as[UpdateProfileRequest]
+      _ <- userManagementService.updateUserProfile(username, updateReq)
+      response <- Ok(ApiResponse.success((), "阅卷员资料更新成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新阅卷员资料失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
   private def handleChangeGraderPassword(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现阅卷员密码修改
-    Ok(ApiResponse.success((), "阅卷员密码修改成功").asJson)
+    for {
+      changeReq <- req.as[ChangePasswordRequest]
+      _ <- userManagementService.changeUserPassword(username, changeReq)
+      response <- Ok(ApiResponse.success((), "阅卷员密码修改成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("修改阅卷员密码失败", error)
+    BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
   // 提取查询参数
