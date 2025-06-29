@@ -67,6 +67,17 @@ class RegionController(regionService: RegionService, authService: AuthService) {
         InternalServerError(StandardResponse.error(s"Failed to fetch data: ${error.getMessage}").asJson)
       }
     
+    // Admin endpoint for getting all regions (provinces and schools combined)
+    case request @ GET -> Root / "api" / "admin" / "regions" =>
+      withAuth(request, "admin") { (_, _) =>
+        regionService.getAdminRegions().flatMap { response =>
+          // Return the documented format: { regions, provinces, schools }
+          Ok(StandardResponse.success(response).asJson)
+        }.handleErrorWith { error =>
+          InternalServerError(StandardResponse.error(s"Failed to fetch regions: ${error.getMessage}").asJson)
+        }
+      }
+    
     // Admin endpoints for province management
     case request @ GET -> Root / "api" / "admin" / "regions" / "provinces" =>
       withAuth(request, "admin") { (_, _) =>

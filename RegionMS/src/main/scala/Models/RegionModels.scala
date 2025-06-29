@@ -97,6 +97,13 @@ case class ProvincesAndSchoolsResponse(data: List[ProvinceWithSchools])
 // Legacy response for separate provinces and schools
 case class SeparateProvincesAndSchoolsResponse(provinces: List[Province], schools: List[School])
 
+// Response for admin regions endpoint - matches documentation format
+case class AdminRegionsResponse(
+  regions: List[ProvinceWithSchools], // Using ProvinceWithSchools as "Region" with nested schools
+  provinces: List[Province],
+  schools: List[School]
+)
+
 case class PaginationInfo(
   page: Int,
   limit: Int,
@@ -170,4 +177,9 @@ object ProvincesAndSchoolsResponse {
 object SeparateProvincesAndSchoolsResponse {
   given Decoder[SeparateProvincesAndSchoolsResponse] = deriveDecoder[SeparateProvincesAndSchoolsResponse]
   given Encoder[SeparateProvincesAndSchoolsResponse] = deriveEncoder[SeparateProvincesAndSchoolsResponse]
+}
+
+object AdminRegionsResponse {
+  given Decoder[AdminRegionsResponse] = deriveDecoder[AdminRegionsResponse]
+  given Encoder[AdminRegionsResponse] = deriveEncoder[AdminRegionsResponse]
 }

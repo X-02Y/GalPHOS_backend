@@ -104,6 +104,34 @@ class RegionService(dao: RegionDAO) {
     }
   }
   
+  // Admin regions data - matches documentation format: { regions, provinces, schools }
+  def getAdminRegions(): IO[AdminRegionsResponse] = {
+    for {
+      provinces <- dao.getAllProvinces()
+      schools <- dao.getAllSchools()
+    } yield {
+      // Group schools by province and create nested structure for "regions"
+      val schoolsByProvince = schools.groupBy(_.provinceId)
+      
+      val regions = provinces.map { province =>
+        val provinceSchools = schoolsByProvince.getOrElse(province.id, List.empty)
+          .map(school => SchoolForFrontend(school.id.toString, school.name))
+        
+        ProvinceWithSchools(
+          id = province.id.toString,
+          name = province.name,
+          schools = provinceSchools
+        )
+      }
+      
+      AdminRegionsResponse(
+        regions = regions,
+        provinces = provinces,
+        schools = schools
+      )
+    }
+  }
+  
   // Region change request operations
   def createRegionChangeRequest(
     userId: UUID,
