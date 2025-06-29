@@ -46,6 +46,25 @@ CREATE TABLE IF NOT EXISTS authservice.user_status_change_log (
     FOREIGN KEY (user_id) REFERENCES authservice.user_table(user_id) ON DELETE CASCADE
 );
 
+-- 区域变更申请表
+CREATE TABLE IF NOT EXISTS authservice.region_change_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    username VARCHAR(100) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    current_province VARCHAR(100) NOT NULL,
+    current_school VARCHAR(100) NOT NULL,
+    requested_province VARCHAR(100) NOT NULL,
+    requested_school VARCHAR(100) NOT NULL,
+    reason TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at TIMESTAMP DEFAULT NOW(),
+    processed_at TIMESTAMP,
+    processed_by VARCHAR(100),
+    admin_comment TEXT,
+    FOREIGN KEY (user_id) REFERENCES authservice.user_table(user_id) ON DELETE CASCADE
+);
+
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_user_registration_requests_status ON authservice.user_registration_requests(status);
 CREATE INDEX IF NOT EXISTS idx_user_registration_requests_coach ON authservice.user_registration_requests(coach_username);
@@ -56,6 +75,11 @@ CREATE INDEX IF NOT EXISTS idx_coach_managed_students_student_username ON authse
 
 CREATE INDEX IF NOT EXISTS idx_user_status_change_log_user_id ON authservice.user_status_change_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_status_change_log_changed_at ON authservice.user_status_change_log(changed_at);
+
+CREATE INDEX IF NOT EXISTS idx_region_change_requests_user_id ON authservice.region_change_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_region_change_requests_username ON authservice.region_change_requests(username);
+CREATE INDEX IF NOT EXISTS idx_region_change_requests_status ON authservice.region_change_requests(status);
+CREATE INDEX IF NOT EXISTS idx_region_change_requests_created_at ON authservice.region_change_requests(created_at);
 
 -- 创建触发器函数：用户状态变更时自动记录日志
 CREATE OR REPLACE FUNCTION log_user_status_change()
@@ -89,6 +113,7 @@ CREATE TRIGGER trigger_user_status_change
 COMMENT ON TABLE authservice.user_registration_requests IS '用户注册申请表，主要用于学生注册申请流程';
 COMMENT ON TABLE authservice.coach_managed_students IS '教练管理的学生关系表';
 COMMENT ON TABLE authservice.user_status_change_log IS '用户状态变更日志表，用于审计追踪';
+COMMENT ON TABLE authservice.region_change_requests IS '区域变更申请表，用于用户申请更改省份和学校';
 
 -- 完成提示
 DO $$
@@ -98,5 +123,6 @@ BEGIN
     RAISE NOTICE '- user_registration_requests: 用户注册申请表';
     RAISE NOTICE '- coach_managed_students: 教练学生关系表';
     RAISE NOTICE '- user_status_change_log: 用户状态变更日志表';
+    RAISE NOTICE '- region_change_requests: 区域变更申请表';
     RAISE NOTICE '已创建相关索引和触发器以提高性能和数据一致性';
 END $$;

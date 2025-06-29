@@ -101,6 +101,26 @@ case class ApprovedUser(
   avatarUrl: Option[String]
 )
 
+object ApprovedUser {
+  import io.circe.syntax.*
+  import io.circe.{Json, Encoder}
+  
+  implicit val approvedUserEncoder: Encoder[ApprovedUser] = Encoder.instance { user =>
+    Json.obj(
+      "id" -> user.id.asJson,
+      "username" -> user.username.asJson,
+      "phone" -> user.phone.asJson,
+      "role" -> user.role.asJson,
+      "province" -> user.province.asJson,
+      "school" -> user.school.asJson,
+      "status" -> user.status.asJson,
+      "approvedAt" -> user.approvedAt.asJson,
+      "lastLoginAt" -> user.lastLoginAt.asJson,
+      "avatarUrl" -> user.avatarUrl.asJson
+    )
+  }
+}
+
 // 用户审核请求
 case class UserApprovalRequest(
   userId: String,
@@ -244,16 +264,27 @@ case class UserProfile(
 )
 
 case class UpdateProfileRequest(
+  username: Option[String] = None,    // 新用户名（需要检查唯一性）
+  name: Option[String] = None,        // 显示名称
   phone: Option[String] = None,
+  bio: Option[String] = None,         // 个人简介
+  expertise: Option[List[String]] = None, // 专业领域
+  avatar: Option[String] = None,      // 头像URL（前端传递的字段名）
   province: Option[String] = None,
   school: Option[String] = None,
-  avatarUrl: Option[String] = None
+  avatarUrl: Option[String] = None    // 兼容性字段
 )
 
+// 密码修改请求 - 学生和教练使用
 case class ChangePasswordRequest(
+  oldPassword: String,
+  newPassword: String
+)
+
+// 密码修改请求 - 阅卷员使用
+case class ChangeGraderPasswordRequest(
   currentPassword: String,
-  newPassword: String,
-  confirmPassword: String
+  newPassword: String
 )
 
 case class AdminProfile(
@@ -266,4 +297,47 @@ case class AdminProfile(
 case class UpdateAdminProfileRequest(
   // 管理员可能只需要更新一些基本信息
   avatarUrl: Option[String] = None
+)
+
+// ===================== 新增的数据模型 =====================
+
+// 更新用户请求
+case class UpdateUserRequest(
+  phone: Option[String] = None,
+  role: Option[String] = None,
+  status: Option[String] = None,
+  province: Option[String] = None,
+  school: Option[String] = None,
+  avatarUrl: Option[String] = None
+)
+
+// 审核注册申请请求
+case class ReviewRegistrationRequest(
+  action: String, // "approve" | "reject"
+  adminComment: Option[String] = None
+)
+
+// 区域变更申请
+case class RegionChangeRequest(
+  province: String,
+  school: String,
+  reason: String
+)
+
+// 区域变更申请记录
+case class RegionChangeRequestRecord(
+  id: String,
+  userId: String,
+  username: String,
+  role: String,
+  currentProvince: String,
+  currentSchool: String,
+  requestedProvince: String,
+  requestedSchool: String,
+  reason: String,
+  status: String, // "pending" | "approved" | "rejected"
+  createdAt: LocalDateTime,
+  processedAt: Option[LocalDateTime] = None,
+  processedBy: Option[String] = None,
+  adminComment: Option[String] = None
 )

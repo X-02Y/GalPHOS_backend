@@ -8,7 +8,8 @@ import java.util.UUID
 class AuthService(
   userService: UserService,
   adminService: AdminService,
-  tokenService: TokenService
+  tokenService: TokenService,
+  regionServiceClient: RegionServiceClient
 ) {
   private val logger = LoggerFactory.getLogger("AuthService")
 

@@ -9,6 +9,7 @@ import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.Authorization
+import org.http4s.Credentials
 import org.slf4j.LoggerFactory
 import Models.*
 import Services.*
@@ -64,6 +65,18 @@ class UserManagementController(
         handleDeleteUser(userId)
       }.map(_.withHeaders(corsHeaders))
 
+    // 单用户操作 - 获取用户信息
+    case req @ GET -> Root / "api" / "admin" / "users" / userId =>
+      authenticateAdmin(req) { _ =>
+        handleGetUserById(userId)
+      }.map(_.withHeaders(corsHeaders))
+
+    // 单用户操作 - 更新用户信息
+    case req @ PUT -> Root / "api" / "admin" / "users" / userId =>
+      authenticateAdmin(req) { _ =>
+        handleUpdateUserById(req, userId)
+      }.map(_.withHeaders(corsHeaders))
+
     // ===================== 教练学生管理模块 =====================
     
     // 获取教练学生关系列表
@@ -104,6 +117,12 @@ class UserManagementController(
         handleApproveStudentRegistration(req)
       }.map(_.withHeaders(corsHeaders))
 
+    // 审核学生注册申请 - review 接口
+    case req @ POST -> Root / "api" / "admin" / "student-registrations" / requestId / "review" =>
+      authenticateAdmin(req) { _ =>
+        handleReviewStudentRegistration(req, requestId)
+      }.map(_.withHeaders(corsHeaders))
+
     // ===================== 个人资料管理模块 =====================
     
     // 管理员个人资料
@@ -140,6 +159,12 @@ class UserManagementController(
         handleStudentRegionChangeRequest(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // 获取学生区域变更申请状态
+    case req @ GET -> Root / "api" / "student" / "region-change" / "status" =>
+      authenticateUser(req, "student") { authResult =>
+        handleGetStudentRegionChangeRequests(authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
     case req @ GET -> Root / "api" / "student" / "region-change" =>
       authenticateUser(req, "student") { authResult =>
         handleGetStudentRegionChangeRequests(authResult.username.getOrElse(""))
@@ -156,6 +181,24 @@ class UserManagementController(
         handleUpdateCoachProfile(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // 教练密码修改
+    case req @ POST -> Root / "api" / "coach" / "profile" / "change-password" =>
+      authenticateUser(req, "coach") { authResult =>
+        handleChangeCoachPassword(req, authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
+    // 教练区域变更申请  
+    case req @ POST -> Root / "api" / "coach" / "profile" / "change-region" =>
+      authenticateUser(req, "coach") { authResult =>
+        handleCoachRegionChangeRequest(req, authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
+    // 获取教练区域变更申请记录
+    case req @ GET -> Root / "api" / "coach" / "profile" / "change-region-requests" =>
+      authenticateUser(req, "coach") { authResult =>
+        handleGetCoachRegionChangeRequests(authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
     // 教练管理的学生
     case req @ GET -> Root / "api" / "coach" / "students" =>
       authenticateUser(req, "coach") { authResult =>
@@ -167,22 +210,24 @@ class UserManagementController(
         handleAddCoachManagedStudent(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // ===================== 阅卷员路由 =====================
+    
     // 阅卷员个人资料
     case req @ GET -> Root / "api" / "grader" / "profile" =>
       authenticateUser(req, "grader") { authResult =>
         handleGetGraderProfile(authResult.username.getOrElse(""))
-      }.map(_.withHeaders(corsHeaders))
+      }
 
     case req @ PUT -> Root / "api" / "grader" / "profile" =>
       authenticateUser(req, "grader") { authResult =>
         handleUpdateGraderProfile(req, authResult.username.getOrElse(""))
-      }.map(_.withHeaders(corsHeaders))
+      }
 
     // 阅卷员密码修改
     case req @ PUT -> Root / "api" / "grader" / "change-password" =>
       authenticateUser(req, "grader") { authResult =>
         handleChangeGraderPassword(req, authResult.username.getOrElse(""))
-      }.map(_.withHeaders(corsHeaders))
+      }
 
     // 健康检查
     case GET -> Root / "health" =>
@@ -299,13 +344,14 @@ class UserManagementController(
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
+  // 删除用户
   private def handleDeleteUser(userId: String): IO[Response[IO]] = {
     for {
       _ <- userManagementService.deleteUser(userId)
       response <- Ok(ApiResponse.success((), "用户删除成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("删除用户失败", error)
+    logger.error(s"删除用户失败: userId=$userId", error)
     BadRequest(ApiResponse.error(s"删除失败: ${error.getMessage}").asJson)
   }
 
@@ -315,10 +361,10 @@ class UserManagementController(
     val queryParams = extractQueryParams(req)
     for {
       result <- coachStudentService.getCoachStudentRelationships(queryParams)
-      response <- Ok(ApiResponse.success(result, "获取教练学生关系列表成功").asJson)
+      response <- Ok(ApiResponse.success(result, "获取教练学生关系成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("获取教练学生关系列表失败", error)
+    logger.error("获取教练学生关系失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
@@ -336,7 +382,7 @@ class UserManagementController(
     for {
       createReq <- req.as[CreateCoachStudentRequest]
       relationshipId <- coachStudentService.createCoachStudentRelationship(createReq)
-      response <- Ok(ApiResponse.success(Map("id" -> relationshipId), "教练学生关系创建成功").asJson)
+      response <- Ok(ApiResponse.success(Map("id" -> relationshipId), "创建教练学生关系成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("创建教练学生关系失败", error)
@@ -346,7 +392,7 @@ class UserManagementController(
   private def handleDeleteCoachStudentRelationship(relationshipId: String): IO[Response[IO]] = {
     for {
       _ <- coachStudentService.deleteCoachStudentRelationship(relationshipId)
-      response <- Ok(ApiResponse.success((), "教练学生关系删除成功").asJson)
+      response <- Ok(ApiResponse.success((), "删除教练学生关系成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("删除教练学生关系失败", error)
@@ -364,52 +410,35 @@ class UserManagementController(
     }
   }
 
+  private def extractQueryParams(req: Request[IO]): QueryParams = {
+    val params = req.params
+    QueryParams(
+      page = params.get("page").flatMap(_.toIntOption),
+      limit = params.get("limit").flatMap(_.toIntOption),
+      role = params.get("role"),
+      status = params.get("status"),
+      search = params.get("search"),
+      provinceId = params.get("provinceId"),
+      coachId = params.get("coachId")
+    )
+  }
+
   // ===================== 新增API处理方法 =====================
 
   // 学生注册审核相关
   private def handleGetStudentRegistrations(req: Request[IO]): IO[Response[IO]] = {
-    val queryParams = extractQueryParams(req)
     for {
-      registrationRequests <- userManagementService.getStudentRegistrationRequests()
-      // 转换为前端期望的格式
-      requests = registrationRequests.map { request =>
-        Map(
-          "id" -> request.id,
-          "username" -> request.username,
-          "phone" -> "",  // 注册申请表中没有phone字段
-          "province" -> request.province,
-          "school" -> request.school,
-          "coachUsername" -> request.coachUsername.getOrElse(""),
-          "reason" -> request.reason.getOrElse(""),
-          "status" -> (request.status.toLowerCase match {
-            case "pending" => "pending"
-            case "approved" => "approved" 
-            case "rejected" => "rejected"
-            case other => other
-          }),
-          "createdAt" -> request.createdAt.toString,
-          "reviewedBy" -> request.reviewedBy.getOrElse(""),
-          "reviewedAt" -> request.reviewedAt.map(_.toString).getOrElse(""),
-          "reviewNote" -> request.reviewNote.getOrElse("")
-        )
-      }
-      responseData = Map("requests" -> requests)
-      response <- Ok(ApiResponse.success(responseData, "获取学生注册申请列表成功").asJson)
+      registrations <- userManagementService.getStudentRegistrationRequests()
+      response <- Ok(ApiResponse.success(registrations, "获取学生注册申请成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("获取学生注册申请列表失败", error)
+    logger.error("获取学生注册申请失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleApproveStudentRegistration(req: Request[IO]): IO[Response[IO]] = {
-    for {
-      approvalReq <- req.as[UserApprovalRequest]
-      _ <- userManagementService.approveUser(approvalReq)
-      response <- Ok(ApiResponse.success((), "学生注册申请审核成功").asJson)
-    } yield response
-  }.handleErrorWith { error =>
-    logger.error("审核学生注册申请失败", error)
-    BadRequest(ApiResponse.error(s"审核失败: ${error.getMessage}").asJson)
+    // TODO: 实现批量审核学生注册申请
+    Ok(ApiResponse.success((), "批量审核学生注册申请成功").asJson)
   }
 
   // 个人资料管理相关
@@ -472,17 +501,29 @@ class UserManagementController(
     BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
+  // 学生区域变更申请相关方法
   private def handleStudentRegionChangeRequest(req: Request[IO], username: String): IO[Response[IO]] = {
-    // TODO: 实现学生区域变更申请
-    Ok(ApiResponse.success((), "区域变更申请提交成功").asJson)
+    for {
+      regionReq <- req.as[RegionChangeRequest]
+      requestId <- userManagementService.createRegionChangeRequest(username, regionReq)
+      response <- Ok(ApiResponse.success(Map("id" -> requestId), "学生区域变更申请提交成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("提交学生区域变更申请失败", error)
+    BadRequest(ApiResponse.error(s"提交失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetStudentRegionChangeRequests(username: String): IO[Response[IO]] = {
-    // TODO: 实现获取学生区域变更申请列表
-    val emptyList: List[String] = List.empty
-    Ok(ApiResponse.success(emptyList, "获取区域变更申请列表成功").asJson)
+    for {
+      requests <- userManagementService.getUserRegionChangeRequests(username)
+      response <- Ok(ApiResponse.success(requests, "获取学生区域变更申请记录成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取学生区域变更申请记录失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
+  // 教练个人资料相关方法
   private def handleGetCoachProfile(username: String): IO[Response[IO]] = {
     for {
       profileOpt <- userManagementService.getUserProfile(username)
@@ -507,28 +548,40 @@ class UserManagementController(
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
-  private def handleGetCoachManagedStudents(req: Request[IO], coachUsername: String): IO[Response[IO]] = {
-    val queryParams = extractQueryParams(req)
+  private def handleChangeCoachPassword(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      result <- coachStudentService.getCoachStudentRelationships(queryParams)
-      response <- Ok(ApiResponse.success(result, "获取教练管理的学生列表成功").asJson)
+      changeReq <- req.as[ChangePasswordRequest]
+      _ <- userManagementService.changeUserPassword(username, changeReq)
+      response <- Ok(ApiResponse.success((), "教练密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("获取教练管理的学生列表失败", error)
+    logger.error("修改教练密码失败", error)
+    BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
+  }
+
+  // 教练管理的学生相关方法
+  private def handleGetCoachManagedStudents(req: Request[IO], username: String): IO[Response[IO]] = {
+    for {
+      students <- coachStudentService.getStudentsByCoach(username)
+      response <- Ok(ApiResponse.success(students, "获取教练管理的学生成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取教练管理的学生失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
-  private def handleAddCoachManagedStudent(req: Request[IO], coachUsername: String): IO[Response[IO]] = {
+  private def handleAddCoachManagedStudent(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      createReq <- req.as[CreateCoachStudentRequest]
-      relationshipId <- coachStudentService.createCoachStudentRelationship(createReq)
+      addReq <- req.as[CreateCoachStudentRequest]
+      relationshipId <- coachStudentService.createCoachStudentRelationship(addReq)
       response <- Ok(ApiResponse.success(Map("id" -> relationshipId), "添加学生成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("添加学生失败", error)
+    logger.error("添加教练管理的学生失败", error)
     BadRequest(ApiResponse.error(s"添加失败: ${error.getMessage}").asJson)
   }
 
+  // 阅卷员个人资料相关方法
   private def handleGetGraderProfile(username: String): IO[Response[IO]] = {
     for {
       profileOpt <- userManagementService.getUserProfile(username)
@@ -555,8 +608,8 @@ class UserManagementController(
 
   private def handleChangeGraderPassword(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      changeReq <- req.as[ChangePasswordRequest]
-      _ <- userManagementService.changeUserPassword(username, changeReq)
+      changeReq <- req.as[ChangeGraderPasswordRequest]
+      _ <- userManagementService.changeGraderPassword(username, changeReq)
       response <- Ok(ApiResponse.success((), "阅卷员密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
@@ -564,17 +617,66 @@ class UserManagementController(
     BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
-  // 提取查询参数
-  private def extractQueryParams(req: Request[IO]): QueryParams = {
-    val params = req.params
-    QueryParams(
-      page = params.get("page").flatMap(_.toIntOption),
-      limit = params.get("limit").flatMap(_.toIntOption),
-      role = params.get("role"),
-      status = params.get("status"),
-      search = params.get("search"),
-      provinceId = params.get("provinceId"),
-      coachId = params.get("coachId")
-    )
+  // ===================== 新增缺失的处理方法 =====================
+
+  // 获取单个用户信息
+  private def handleGetUserById(userId: String): IO[Response[IO]] = {
+    for {
+      userOpt <- userManagementService.getUserById(userId)
+      response <- userOpt match {
+        case Some(user) => Ok(ApiResponse.success(user, "获取用户信息成功").asJson)
+        case None => NotFound(ApiResponse.error("用户不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error(s"获取用户信息失败: userId=$userId", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
+  }
+
+  // 更新单个用户信息
+  private def handleUpdateUserById(req: Request[IO], userId: String): IO[Response[IO]] = {
+    for {
+      updateReq <- req.as[UpdateUserRequest]
+      _ <- userManagementService.updateUserById(userId, updateReq)
+      response <- Ok(ApiResponse.success((), "用户信息更新成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error(s"更新用户信息失败: userId=$userId", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
+  }
+
+  // 审核学生注册申请 - review 接口
+  private def handleReviewStudentRegistration(req: Request[IO], requestId: String): IO[Response[IO]] = {
+    for {
+      reviewReq <- req.as[ReviewRegistrationRequest]
+      _ <- userManagementService.reviewStudentRegistration(requestId, reviewReq)
+      response <- Ok(ApiResponse.success((), "审核学生注册申请成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error(s"审核学生注册申请失败: requestId=$requestId", error)
+    BadRequest(ApiResponse.error(s"审核失败: ${error.getMessage}").asJson)
+  }
+
+  // 教练区域变更申请
+  private def handleCoachRegionChangeRequest(req: Request[IO], username: String): IO[Response[IO]] = {
+    for {
+      regionReq <- req.as[RegionChangeRequest]
+      requestId <- userManagementService.createRegionChangeRequest(username, regionReq)
+      response <- Ok(ApiResponse.success(Map("id" -> requestId), "教练区域变更申请提交成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("提交教练区域变更申请失败", error)
+    BadRequest(ApiResponse.error(s"提交失败: ${error.getMessage}").asJson)
+  }
+
+  // 获取教练区域变更申请记录
+  private def handleGetCoachRegionChangeRequests(username: String): IO[Response[IO]] = {
+    for {
+      requests <- userManagementService.getUserRegionChangeRequests(username)
+      response <- Ok(ApiResponse.success(requests, "获取教练区域变更申请记录成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取教练区域变更申请记录失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 }

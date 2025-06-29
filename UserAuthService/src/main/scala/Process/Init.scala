@@ -25,10 +25,11 @@ object Init {
       _ <- IO(logger.info("数据库表初始化完成"))
       
       // 创建服务实例
-      userService = new UserServiceImpl()
+      regionServiceClient = new RegionServiceClientImpl("http://localhost:3007")  // RegionMS 的地址
+      userService = new UserServiceImpl(regionServiceClient)
       adminService = new AdminServiceImpl()
       tokenService = new TokenServiceImpl(config)
-      authService = new AuthService(userService, adminService, tokenService)
+      authService = new AuthService(userService, adminService, tokenService, regionServiceClient)
       
       // 创建控制器
       authController = new AuthController(authService)

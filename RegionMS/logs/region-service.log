@@ -199,3 +199,48 @@ java.net.BindException: Address already in use: bind
 2025-06-28 21:02:54.271 [io-compute-blocker-5] INFO  com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Start completed.
 2025-06-28 21:02:55.231 [io-compute-3] INFO  o.h.ember.server.EmberServerBuilder - Ember-Server service bound to address: 127.0.0.1:3007
 2025-06-28 21:02:55.232 [io-compute-3] INFO  Process.Server - Region Management Service started at http://127.0.0.1:3007
+2025-06-29 18:09:16.981 [io-compute-blocker-3] INFO  com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Starting...
+2025-06-29 18:09:19.127 [io-compute-blocker-3] ERROR Process.Server - Failed to start server: Failed to initialize pool: 致命错误: 数据库 "region_management" 不存在
+com.zaxxer.hikari.pool.HikariPool$PoolInitializationException: Failed to initialize pool: 致命错误: 数据库 "region_management" 不存在
+	at com.zaxxer.hikari.pool.HikariPool.throwPoolInitializationException(HikariPool.java:584)
+	at com.zaxxer.hikari.pool.HikariPool.checkFailFast(HikariPool.java:571)
+	at com.zaxxer.hikari.pool.HikariPool.<init>(HikariPool.java:98)
+	at com.zaxxer.hikari.HikariDataSource.<init>(HikariDataSource.java:80)
+	at Database.DatabaseConnection.<init>(DatabaseConnection.scala:21)
+	at Process.Init$.init(Init.scala:14)
+	at Process.Server$.run$$anonfun$1(Server.scala:31)
+	at blocking @ Process.ProcessUtils$.readConfig(ProcessUtils.scala:29)
+	at flatMap @ Process.Server$.run(Server.scala:61)
+	at handleErrorWith @ Process.Server$.run(Server.scala:64)
+	at main$ @ Process.Server$.main(Server.scala:14)
+	at main$ @ Process.Server$.main(Server.scala:14)
+	at main$ @ Process.Server$.main(Server.scala:14)
+Caused by: org.postgresql.util.PSQLException: 致命错误: 数据库 "region_management" 不存在
+	at org.postgresql.core.v3.QueryExecutorImpl.receiveErrorResponse(QueryExecutorImpl.java:2725)
+	at org.postgresql.core.v3.QueryExecutorImpl.readStartupMessages(QueryExecutorImpl.java:2837)
+	at org.postgresql.core.v3.QueryExecutorImpl.<init>(QueryExecutorImpl.java:175)
+	at org.postgresql.core.v3.ConnectionFactoryImpl.openConnectionImpl(ConnectionFactoryImpl.java:317)
+	at org.postgresql.core.ConnectionFactory.openConnection(ConnectionFactory.java:54)
+	at org.postgresql.jdbc.PgConnection.<init>(PgConnection.java:273)
+	at org.postgresql.Driver.makeConnection(Driver.java:446)
+	at org.postgresql.Driver.connect(Driver.java:298)
+	at com.zaxxer.hikari.util.DriverDataSource.getConnection(DriverDataSource.java:137)
+	at com.zaxxer.hikari.pool.PoolBase.newConnection(PoolBase.java:360)
+	at com.zaxxer.hikari.pool.PoolBase.newPoolEntry(PoolBase.java:202)
+	at com.zaxxer.hikari.pool.HikariPool.createPoolEntry(HikariPool.java:461)
+	at com.zaxxer.hikari.pool.HikariPool.checkFailFast(HikariPool.java:550)
+	at com.zaxxer.hikari.pool.HikariPool.<init>(HikariPool.java:98)
+	at com.zaxxer.hikari.HikariDataSource.<init>(HikariDataSource.java:80)
+	at Database.DatabaseConnection.<init>(DatabaseConnection.scala:21)
+	at Process.Init$.init(Init.scala:14)
+	at Process.Server$.run$$anonfun$1(Server.scala:31)
+	at cats.effect.IOFiber.succeeded(IOFiber.scala:1200)
+	at cats.effect.IOFiber.runLoop(IOFiber.scala:1012)
+	at cats.effect.IOFiber.execR(IOFiber.scala:1362)
+	at cats.effect.IOFiber.run(IOFiber.scala:112)
+	at cats.effect.unsafe.WorkerThread.run(WorkerThread.scala:702)
+2025-06-29 18:17:06.194 [io-compute-blocker-13] INFO  com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Starting...
+2025-06-29 18:17:07.338 [io-compute-blocker-13] INFO  com.zaxxer.hikari.pool.HikariPool - HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@5bf24216
+2025-06-29 18:17:07.340 [io-compute-blocker-13] INFO  com.zaxxer.hikari.HikariDataSource - HikariPool-1 - Start completed.
+2025-06-29 18:17:08.432 [io-compute-12] INFO  o.h.ember.server.EmberServerBuilder - Ember-Server service bound to address: 127.0.0.1:3007
+2025-06-29 18:17:08.435 [io-compute-12] INFO  Process.Server - Region Management Service started at http://127.0.0.1:3007
