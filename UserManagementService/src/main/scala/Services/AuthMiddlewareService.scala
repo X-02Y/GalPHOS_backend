@@ -114,7 +114,9 @@ class AuthMiddlewareServiceImpl(config: Config.ServiceConfig) extends AuthMiddle
                     case Some(data) =>
                       val dataCursor = data.hcursor
                       val username = dataCursor.downField("username").as[String].toOption
+                      // 尝试从type字段(管理员)或role字段(普通用户)读取角色信息
                       val userType = dataCursor.downField("type").as[String].toOption
+                        .orElse(dataCursor.downField("role").as[String].toOption)
                       
                       requiredRole match {
                         case Some(role) if !userType.contains(role) =>

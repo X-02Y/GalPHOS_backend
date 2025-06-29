@@ -19,7 +19,7 @@ trait UserService {
   def getUserInfo(username: String, role: String): IO[UserInfo]
 }
 
-class UserServiceImpl extends UserService {
+class UserServiceImpl(regionServiceClient: RegionServiceClient) extends UserService {
   private val logger = LoggerFactory.getLogger("UserService")
   private val schemaName = "authservice"
 
@@ -65,26 +65,56 @@ class UserServiceImpl extends UserService {
     val role = mapRoleStringToEnum(registerReq.role)
     val status = UserStatus.Pending.value
     
-    val sql = s"""
-      INSERT INTO $schemaName.user_table (user_id, username, phone, password_hash, salt, role, status, province_id, school_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-    """.stripMargin
-    
-    val params = List(
-      SqlParameter("String", userId),
-      SqlParameter("String", registerReq.username),
-      SqlParameter("String", registerReq.phone),
-      SqlParameter("String", hashedPassword),
-      SqlParameter("String", salt),
-      SqlParameter("String", role),
-      SqlParameter("String", status),
-      SqlParameter("String", registerReq.province.orNull),
-      SqlParameter("String", registerReq.school.orNull)
-    )
+    // 如果用户提供了省份和学校信息，需要先验证
+    val validationIO = (registerReq.province, registerReq.school) match {
+      case (Some(provinceId), Some(schoolId)) =>
+        logger.info(s"验证省份和学校: provinceId=$provinceId, schoolId=$schoolId")
+        regionServiceClient.validateProvinceAndSchool(provinceId, schoolId).flatMap {
+          case Right(true) =>
+            logger.info("省份和学校验证通过")
+            IO.unit
+          case Right(false) =>
+            IO.raiseError(new RuntimeException("省份和学校验证失败"))
+          case Left(error) =>
+            logger.error(s"省份和学校验证失败: $error")
+            IO.raiseError(new RuntimeException(s"省份和学校验证失败: $error"))
+        }
+      case (None, None) =>
+        // 没有提供省份学校信息（如阅卷员），跳过验证
+        logger.info("未提供省份学校信息，跳过验证")
+        IO.unit
+      case _ =>
+        // 省份和学校信息不完整
+        IO.raiseError(new RuntimeException("省份和学校信息必须同时提供或同时为空"))
+    }
     
     for {
-      _ <- DatabaseManager.executeUpdate(sql, params)
-      _ = logger.info(s"创建用户成功: ${registerReq.username}")
+      _ <- validationIO  // 先进行验证
+      // 验证通过后插入数据库
+      sql = s"""
+        INSERT INTO $schemaName.user_table (user_id, username, phone, password_hash, salt, role, status, province_id, school_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      """.stripMargin
+      
+      params = List(
+        SqlParameter("String", userId),
+        SqlParameter("String", registerReq.username),
+        SqlParameter("String", registerReq.phone),
+        SqlParameter("String", hashedPassword),
+        SqlParameter("String", salt),
+        SqlParameter("String", role),
+        SqlParameter("String", status),
+        SqlParameter("String", registerReq.province.orNull),
+        SqlParameter("String", registerReq.school.orNull)
+      )
+      
+      _ = logger.info(s"创建用户参数 - userId: $userId, username: ${registerReq.username}, province: ${registerReq.province}, school: ${registerReq.school}")
+      
+      _ <- DatabaseManager.executeUpdate(sql, params).handleErrorWith { error =>
+        logger.error(s"数据库插入失败: ${error.getMessage}", error)
+        IO.raiseError(new RuntimeException(s"数据库插入失败: ${error.getMessage}"))
+      }
+      _ = logger.info(s"用户创建成功: $userId")
     } yield userId
   }
 
