@@ -28,11 +28,17 @@ class RegionController(regionService: RegionService, authService: AuthService) {
   ): IO[Response[IO]] = {
     extractAuthToken(request) match {
       case Some(token) =>
+        // println(s"DEBUG: Extracted token for role $requiredRole: ${token.take(20)}...")
         authService.requireRole(token, requiredRole).flatMap {
-          case Right((userId, role)) => action(userId, role)
-          case Left(error) => Forbidden(StandardResponse.error(error).asJson)
+          case Right((userId, role)) => 
+            // println(s"DEBUG: Authentication successful for user $userId with role $role")
+            action(userId, role)
+          case Left(error) => 
+            // println(s"DEBUG: Authentication failed: $error")
+            Forbidden(StandardResponse.error(error).asJson)
         }
       case None =>
+        // println("DEBUG: No authorization header found")
         Forbidden(StandardResponse.error("Authorization header missing").asJson)
     }
   }
@@ -70,10 +76,16 @@ class RegionController(regionService: RegionService, authService: AuthService) {
     // Admin endpoint for getting all regions (provinces and schools combined)
     case request @ GET -> Root / "api" / "admin" / "regions" =>
       withAuth(request, "admin") { (_, _) =>
+        // println("DEBUG: Admin regions endpoint called, starting data fetch...")
         regionService.getAdminRegions().flatMap { response =>
-          // Return the documented format: { regions, provinces, schools }
-          Ok(StandardResponse.success(response).asJson)
+          // println(s"DEBUG: Successfully fetched regions data: regions=${response.regions.size}, provinces=${response.provinces.size}, schools=${response.schools.size}")
+          // Return just the regions array (provinces with nested schools) as the frontend expects
+          val jsonResponse = StandardResponse.success(response.regions).asJson
+          // println(s"DEBUG: JSON response: ${jsonResponse.spaces2}")
+          Ok(jsonResponse)
         }.handleErrorWith { error =>
+          // println(s"DEBUG: Error in getAdminRegions: ${error.getMessage}")
+          error.printStackTrace()
           InternalServerError(StandardResponse.error(s"Failed to fetch regions: ${error.getMessage}").asJson)
         }
       }
@@ -91,7 +103,7 @@ class RegionController(regionService: RegionService, authService: AuthService) {
     case request @ POST -> Root / "api" / "admin" / "regions" / "provinces" =>
       withAuth(request, "admin") { (_, _) =>
         request.as[CreateProvinceRequest].flatMap { req =>
-          regionService.createProvince(req.provinceName).flatMap {
+          regionService.createProvince(req.name).flatMap {  // Changed from req.provinceName to req.name
             case Right(province) =>
               Created(StandardResponse.success(province).asJson)
             case Left(error) =>
@@ -134,7 +146,7 @@ class RegionController(regionService: RegionService, authService: AuthService) {
     case request @ POST -> Root / "api" / "admin" / "regions" / "schools" =>
       withAuth(request, "admin") { (_, _) =>
         request.as[CreateSchoolRequest].flatMap { req =>
-          regionService.createSchool(req.schoolName, req.provinceId).flatMap {
+          regionService.createSchool(req.name, req.provinceId).flatMap {  // Fixed parameter order: name first, then provinceId
             case Right(school) =>
               Created(StandardResponse.success(school).asJson)
             case Left(error) =>
@@ -148,7 +160,7 @@ class RegionController(regionService: RegionService, authService: AuthService) {
     case request @ PUT -> Root / "api" / "admin" / "regions" / "schools" / UUIDVar(schoolId) =>
       withAuth(request, "admin") { (_, _) =>
         request.as[UpdateSchoolRequest].flatMap { req =>
-          regionService.updateSchool(schoolId, req.schoolName).flatMap {
+          regionService.updateSchool(schoolId, req.name).flatMap {  // Changed from req.schoolName to req.name
             case Right(school) =>
               Ok(StandardResponse.success(school).asJson)
             case Left(error) =>

@@ -91,12 +91,14 @@ class RegionService(dao: RegionDAO) {
       
       val provincesWithSchools = provinces.map { province =>
         val provinceSchools = schoolsByProvince.getOrElse(province.id, List.empty)
-          .map(school => SchoolForFrontend(school.id.toString, school.name))
+          .map(school => SchoolForFrontend(school.id.toString, school.name, school.createdAt, school.updatedAt))
         
         ProvinceWithSchools(
           id = province.id.toString,
           name = province.name,
-          schools = provinceSchools
+          schools = provinceSchools,
+          createdAt = province.createdAt,
+          updatedAt = province.updatedAt
         )
       }
       
@@ -115,12 +117,14 @@ class RegionService(dao: RegionDAO) {
       
       val regions = provinces.map { province =>
         val provinceSchools = schoolsByProvince.getOrElse(province.id, List.empty)
-          .map(school => SchoolForFrontend(school.id.toString, school.name))
+          .map(school => SchoolForFrontend(school.id.toString, school.name, school.createdAt, school.updatedAt))
         
         ProvinceWithSchools(
           id = province.id.toString,
           name = province.name,
-          schools = provinceSchools
+          schools = provinceSchools,
+          createdAt = province.createdAt,
+          updatedAt = province.updatedAt
         )
       }
       

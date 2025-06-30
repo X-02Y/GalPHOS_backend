@@ -3,7 +3,18 @@ package Models
 import io.circe.{Decoder, Encoder}
 import io.circe.generic.semiauto.*
 import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 import java.util.UUID
+
+// Custom encoders/decoders for OffsetDateTime to ensure proper JSON formatting
+given Encoder[OffsetDateTime] = Encoder.encodeString.contramap[OffsetDateTime](_.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+given Decoder[OffsetDateTime] = Decoder.decodeString.emap { str =>
+  try {
+    Right(OffsetDateTime.parse(str, DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+  } catch {
+    case _: Exception => Left(s"Invalid date format: $str")
+  }
+}
 
 case class Province(
   id: UUID,
@@ -58,9 +69,9 @@ object RegionChangeRequest {
 }
 
 // Request DTOs
-case class CreateProvinceRequest(provinceName: String)
-case class CreateSchoolRequest(provinceId: UUID, schoolName: String)
-case class UpdateSchoolRequest(schoolName: String)
+case class CreateProvinceRequest(name: String)  // Changed from provinceName to name
+case class CreateSchoolRequest(provinceId: UUID, name: String)  // Changed from schoolName to name
+case class UpdateSchoolRequest(name: String)  // Changed from schoolName to name
 case class RegionChangeSubmissionRequest(
   provinceId: UUID,
   schoolId: UUID,
@@ -83,12 +94,16 @@ case class RegionChangeRequestResponse(
 case class ProvinceWithSchools(
   id: String,  // Frontend expects string IDs
   name: String,
-  schools: List[SchoolForFrontend]
+  schools: List[SchoolForFrontend],
+  createdAt: OffsetDateTime,
+  updatedAt: OffsetDateTime
 )
 
 case class SchoolForFrontend(
   id: String,  // Frontend expects string IDs
-  name: String
+  name: String,
+  createdAt: OffsetDateTime,
+  updatedAt: OffsetDateTime
 )
 
 // Response for provinces-schools endpoint (frontend compatible)
