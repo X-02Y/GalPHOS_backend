@@ -149,9 +149,9 @@ class FileStorageDB(config: ServerConfig)(implicit ec: ExecutionContext) {
   
   private def mapFileAccessLog(rs: ResultSet): FileAccessLog = {
     FileAccessLog(
-      logId = rs.getInt("log_id"),
+      logId = rs.getString("log_id"),
       fileId = rs.getString("file_id"),
-      accessUserId = Option(rs.getString("access_user_id")),
+      accessUserId = rs.getString("access_user_id"),
       accessUserType = Option(rs.getString("access_user_type")),
       accessTime = rs.getTimestamp("access_time").toLocalDateTime,
       accessType = rs.getString("access_type"),
@@ -285,14 +285,14 @@ class FileStorageDB(config: ServerConfig)(implicit ec: ExecutionContext) {
   def insertAccessLog(log: FileAccessLog): Future[Int] = {
     val sql = """
       INSERT INTO file_access_log (
-        file_id, access_user_id, access_user_type, access_time, access_type,
+        file_id, access_user_id, access_user_type, access_time, access_type, 
         client_ip, user_agent, success, error_message
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     
     executeUpdate(sql,
       log.fileId,
-      log.accessUserId.orNull,
+      log.accessUserId,
       log.accessUserType.orNull,
       Timestamp.valueOf(log.accessTime),
       log.accessType,
@@ -379,4 +379,227 @@ class FileStorageDB(config: ServerConfig)(implicit ec: ExecutionContext) {
       }
     }
   }
+  
+  // 获取用户的头像文件列表
+  def getUserAvatarFiles(userId: String, userType: String): Future[List[FileInfo]] = {
+    val sql = """
+      SELECT file_id, original_name, stored_name, file_path, file_size, file_type, 
+             mime_type, upload_user_id, upload_user_type, upload_time, file_status,
+             access_count, download_count, last_access_time, description, file_hash,
+             related_exam_id, related_submission_id, created_at, updated_at
+      FROM files 
+      WHERE upload_user_id = ? 
+      AND upload_user_type = ? 
+      AND description = '用户头像' 
+      AND file_status = 'active'
+      ORDER BY upload_time DESC
+    """
+    
+    executeQuery(sql, userId, userType) { rs =>
+      FileInfo(
+        fileId = rs.getString("file_id"),
+        originalName = rs.getString("original_name"),
+        storedName = rs.getString("stored_name"),
+        filePath = rs.getString("file_path"),
+        fileSize = rs.getInt("file_size"),
+        fileType = rs.getString("file_type"),
+        mimeType = Option(rs.getString("mime_type")),
+        uploadUserId = Option(rs.getString("upload_user_id")),
+        uploadUserType = Option(rs.getString("upload_user_type")),
+        uploadTime = rs.getTimestamp("upload_time").toLocalDateTime,
+        fileStatus = rs.getString("file_status"),
+        accessCount = rs.getInt("access_count"),
+        downloadCount = rs.getInt("download_count"),
+        lastAccessTime = Option(rs.getTimestamp("last_access_time")).map(_.toLocalDateTime),
+        description = Option(rs.getString("description")),
+        fileHash = Option(rs.getString("file_hash")),
+        relatedExamId = Option(rs.getString("related_exam_id")),
+        relatedSubmissionId = Option(rs.getString("related_submission_id")),
+        createdAt = rs.getTimestamp("created_at").toLocalDateTime,
+        updatedAt = rs.getTimestamp("updated_at").toLocalDateTime
+      )
+    }
+  }
+  
+  // 删除文件记录（物理删除）
+  def deleteFileRecord(fileId: String): Future[Int] = {
+    val sql = "DELETE FROM files WHERE file_id = ?"
+    executeUpdate(sql, fileId)
+  }
+  
+  // 通用文件覆盖逻辑
+  def cleanupOverridableFiles(
+    userId: String,
+    userType: String,
+    category: String,
+    relatedId: Option[String] = None,
+    questionNumber: Option[Int] = None
+  ): Future[List[String]] = {
+    category match {
+      case "avatar" =>
+        // 头像：删除用户的所有旧头像
+        cleanupUserOldAvatar(userId, userType)
+        
+      case "answer-image" if relatedId.isDefined && questionNumber.isDefined =>
+        // 答题图片：删除同一考试同一题号的旧答案图片
+        cleanupOldAnswerImage(userId, userType, relatedId.get, questionNumber.get)
+        
+      case "exam-file" if relatedId.isDefined =>
+        // 考试文件：根据文件名删除同名文件（可选）
+        Future.successful(List.empty) // 暂时不覆盖考试文件
+        
+      case "document" =>
+        // 文档：根据业务需求决定是否覆盖
+        Future.successful(List.empty) // 暂时不覆盖文档
+        
+      case _ =>
+        // 其他类型文件不覆盖
+        Future.successful(List.empty)
+    }
+  }
+  
+  // 清理用户旧头像文件
+  def cleanupUserOldAvatar(userId: String, userType: String): Future[List[String]] = {
+    getUserAvatarFiles(userId, userType).flatMap { avatarFiles =>
+      if (avatarFiles.nonEmpty) {
+        val deleteOps = avatarFiles.map { file =>
+          deleteFileRecord(file.fileId).map(_ => file.fileId)
+        }
+        Future.sequence(deleteOps)
+      } else {
+        Future.successful(List.empty)
+      }
+    }
+  }
+  
+  // 清理同一考试同一题号的旧答案图片
+  def cleanupOldAnswerImage(
+    userId: String, 
+    userType: String, 
+    examId: String, 
+    questionNumber: Int
+  ): Future[List[String]] = {
+    val sql = """
+      SELECT file_id, file_path FROM files 
+      WHERE upload_user_id = ? 
+      AND upload_user_type = ? 
+      AND related_exam_id = ?
+      AND description LIKE ?
+      AND file_status = 'active'
+    """
+    
+    val descriptionPattern = s"%题号${questionNumber}%"
+    
+    executeQuery(sql, userId, userType, examId, descriptionPattern) { rs =>
+      (rs.getString("file_id"), rs.getString("file_path"))
+    }.flatMap { oldFiles =>
+      if (oldFiles.nonEmpty) {
+        val deleteOps = oldFiles.map { case (fileId, _) =>
+          deleteFileRecord(fileId).map(_ => fileId)
+        }
+        Future.sequence(deleteOps)
+      } else {
+        Future.successful(List.empty)
+      }
+    }
+  }
+  
+  // 清理同名考试文件
+  def cleanupSameNameExamFile(
+    examId: String, 
+    fileName: String
+  ): Future[List[String]] = {
+    val sql = """
+      SELECT file_id, file_path FROM files 
+      WHERE related_exam_id = ?
+      AND original_name = ?
+      AND file_status = 'active'
+    """
+    
+    executeQuery(sql, examId, fileName) { rs =>
+      (rs.getString("file_id"), rs.getString("file_path"))
+    }.flatMap { oldFiles =>
+      if (oldFiles.nonEmpty) {
+        val deleteOps = oldFiles.map { case (fileId, _) =>
+          deleteFileRecord(fileId).map(_ => fileId)
+        }
+        Future.sequence(deleteOps)
+      } else {
+        Future.successful(List.empty)
+      }
+    }
+  }
+  
+  // 标记文件为已删除
+  def markFileAsDeleted(fileId: String): Future[Int] = {
+    val sql = "UPDATE files SET file_status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE file_id = ?"
+    executeUpdate(sql, fileId)
+  }
+  
+  // 更新文件访问统计
+  def updateFileAccessStats(fileId: String, action: String): Future[Int] = {
+    action match {
+      case "download" =>
+        val sql = """
+          UPDATE files 
+          SET download_count = download_count + 1, 
+              access_count = access_count + 1,
+              last_access_time = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE file_id = ?
+        """
+        executeUpdate(sql, fileId)
+      case "access" =>
+        val sql = """
+          UPDATE files 
+          SET access_count = access_count + 1,
+              last_access_time = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE file_id = ?
+        """
+        executeUpdate(sql, fileId)
+      case _ =>
+        Future.successful(0)
+    }
+  }
+  
+  // 根据用户获取文件列表（兼容方法名）
+  def getFilesByUser(userId: String, userType: Option[String]): Future[List[FileInfo]] = {
+    val sql = userType match {
+      case Some(_) => """
+        SELECT * FROM files 
+        WHERE upload_user_id = ? AND upload_user_type = ? AND file_status = 'active'
+        ORDER BY upload_time DESC
+      """
+      case None => """
+        SELECT * FROM files 
+        WHERE upload_user_id = ? AND file_status = 'active'
+        ORDER BY upload_time DESC
+      """
+    }
+    
+    val params = userType match {
+      case Some(uType) => Seq(userId, uType)
+      case None => Seq(userId)
+    }
+    
+    executeQuery(sql, params*)(mapFileInfo)
+  }
+  
+  // 根据文件ID获取文件信息（兼容方法名）
+  def getFileById(fileId: String): Future[Option[FileInfo]] = {
+    getFileInfoById(fileId)
+  }
+  
+  // 根据考试ID获取文件列表（兼容方法名）
+  def getFilesByExam(examId: String): Future[List[FileInfo]] = {
+    getFilesByExamId(examId)
+  }
+  
+  // 获取文件统计信息
+  def getFileStats(): Future[DashboardStats] = {
+    getDashboardStats().map(_.getOrElse(DashboardStats(0, 0L, 0, 0, 0, 0, 0)))
+  }
 }
+
+// 所有模型定义在Models包中，这里不重复定义

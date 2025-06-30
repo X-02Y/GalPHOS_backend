@@ -58,11 +58,14 @@ class FileStorageInternalController(fileStorageService: FileStorageService, conf
                 onComplete(fileStorageService.uploadFile(
                   request.originalName,
                   request.fileContent,
+                  request.fileType,
+                  request.mimeType,
                   request.uploadUserId,
                   request.uploadUserType,
                   request.examId,
                   request.submissionId,
-                  request.description
+                  request.description,
+                  request.category
                 )) {
                   case Success(Right(response)) =>
                     complete(HttpResponse(

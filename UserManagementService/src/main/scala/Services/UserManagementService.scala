@@ -20,6 +20,7 @@ trait UserManagementService {
   // 新增：获取学生注册申请（只包含有教练关联的）
   def getStudentRegistrationRequests(): IO[List[StudentRegistrationRequest]]
   def reviewStudentRegistration(requestId: String, request: ReviewRegistrationRequest): IO[Unit]
+  def approveStudentRegistration(request: StudentRegistrationApprovalRequest): IO[Unit]
   
   // 个人资料管理相关方法
   def getUserProfile(username: String): IO[Option[UserProfile]]
@@ -806,6 +807,36 @@ class UserManagementServiceImpl() extends UserManagementService {
       } else {
         IO.unit
       }
+    } yield ()
+  }
+
+  override def approveStudentRegistration(request: StudentRegistrationApprovalRequest): IO[Unit] = {
+    val action = request.action.toLowerCase match {
+      case "approve" => "approved"
+      case "reject" => "rejected"
+      case _ => throw new IllegalArgumentException(s"Invalid action: ${request.action}")
+    }
+
+    val placeholders = request.requestIds.map(_ => "?").mkString(",")
+    val sql = s"""
+      UPDATE authservice.student_registrations 
+      SET status = ?, reviewed_at = CURRENT_TIMESTAMP, review_note = ?
+      WHERE id IN ($placeholders)
+    """.stripMargin
+
+    val params = List(
+      SqlParameter("String", action),
+      SqlParameter("String", request.adminComment.getOrElse(""))
+    ) ++ request.requestIds.map(id => SqlParameter("String", id))
+
+    for {
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected != request.requestIds.length) {
+        IO(logger.warn(s"批量审核学生注册申请：期望更新 ${request.requestIds.length} 条，实际更新 $rowsAffected 条"))
+      } else {
+        IO.unit
+      }
+      _ <- IO(logger.info(s"批量审核学生注册申请完成：$action，更新了 $rowsAffected 条记录"))
     } yield ()
   }
 
