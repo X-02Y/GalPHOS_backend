@@ -372,3 +372,10 @@ case class FileOperationResponse(
   fileUrl: Option[String] = None,
   fileId: Option[String] = None
 )
+
+// 学生注册申请批量审核请求
+case class StudentRegistrationApprovalRequest(
+  requestIds: List[String],
+  action: String, // "approve" | "reject"
+  adminComment: Option[String] = None
+)

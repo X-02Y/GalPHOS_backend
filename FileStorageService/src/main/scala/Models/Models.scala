@@ -52,10 +52,10 @@ case class FileUploadRequest(
 case class FileUploadResponse(
   fileId: String,
   originalName: String,
-  fileSize: Long,
-  fileType: String,
+  storedName: String,
+  fileSize: Int,
   uploadTime: LocalDateTime,
-  success: Boolean,
+  uploadUserId: String,
   message: String
 )
 
@@ -64,10 +64,10 @@ case class FileDownloadResponse(
   fileId: String,
   originalName: String,
   fileContent: Array[Byte],
-  fileSize: Long,
+  fileSize: Int,
   mimeType: String,
-  success: Boolean,
-  message: String
+  downloadTime: LocalDateTime,
+  success: Boolean
 )
 
 // 文件导出响应
@@ -82,16 +82,16 @@ case class FileExportResponse(
 
 // 文件访问日志
 case class FileAccessLog(
-  logId: Int,
+  logId: String,
   fileId: String,
-  accessUserId: Option[String],
+  accessUserId: String,
   accessUserType: Option[String],
   accessTime: LocalDateTime,
   accessType: String,
-  clientIp: Option[String],
-  userAgent: Option[String],
-  success: Boolean,
-  errorMessage: Option[String]
+  clientIp: Option[String] = None,
+  userAgent: Option[String] = None,
+  success: Boolean = true,
+  errorMessage: Option[String] = None
 )
 
 // 统计信息
@@ -170,25 +170,28 @@ object JsonProtocol extends DefaultJsonProtocol {
   }
 
   // 基础模型格式化器
-  implicit val fileInfoFormat: RootJsonFormat[FileInfo] = jsonFormat20(FileInfo)
-  implicit val fileUploadRequestFormat: RootJsonFormat[FileUploadRequest] = jsonFormat3(FileUploadRequest)
-  implicit val fileUploadResponseFormat: RootJsonFormat[FileUploadResponse] = jsonFormat7(FileUploadResponse)
-  implicit val fileDownloadResponseFormat: RootJsonFormat[FileDownloadResponse] = jsonFormat7(FileDownloadResponse)
-  implicit val fileExportResponseFormat: RootJsonFormat[FileExportResponse] = jsonFormat6(FileExportResponse)
-  implicit val dashboardStatsFormat: RootJsonFormat[DashboardStats] = jsonFormat7(DashboardStats)
-  implicit val internalFileOperationResponseFormat: RootJsonFormat[InternalFileOperationResponse] = jsonFormat9(InternalFileOperationResponse)
-  implicit val microserviceConfigFormat: RootJsonFormat[MicroserviceConfig] = jsonFormat5(MicroserviceConfig)
+  implicit val fileInfoFormat: RootJsonFormat[FileInfo] = jsonFormat20(FileInfo.apply)
+  implicit val fileUploadRequestFormat: RootJsonFormat[FileUploadRequest] = jsonFormat3(FileUploadRequest.apply)
+  implicit val fileUploadResponseFormat: RootJsonFormat[FileUploadResponse] = jsonFormat7(FileUploadResponse.apply)
+  implicit val fileDownloadResponseFormat: RootJsonFormat[FileDownloadResponse] = jsonFormat7(FileDownloadResponse.apply)
+  implicit val fileExportResponseFormat: RootJsonFormat[FileExportResponse] = jsonFormat6(FileExportResponse.apply)
+  implicit val dashboardStatsFormat: RootJsonFormat[DashboardStats] = jsonFormat7(DashboardStats.apply)
+  implicit val internalFileOperationResponseFormat: RootJsonFormat[InternalFileOperationResponse] = jsonFormat9(InternalFileOperationResponse.apply)
+  implicit val microserviceConfigFormat: RootJsonFormat[MicroserviceConfig] = jsonFormat5(MicroserviceConfig.apply)
   
   // ApiResponse 格式化器（泛型）
   implicit def apiResponseFormat[T: JsonFormat]: RootJsonFormat[ApiResponse[T]] = jsonFormat3(ApiResponse[T])
 
   // 内部通信模型格式化器
-  implicit val internalUploadRequestFormat: RootJsonFormat[InternalUploadRequest] = jsonFormat10(InternalUploadRequest)
-  implicit val internalDownloadRequestFormat: RootJsonFormat[InternalDownloadRequest] = jsonFormat4(InternalDownloadRequest)
-  implicit val internalUploadResponseFormat: RootJsonFormat[InternalUploadResponse] = jsonFormat6(InternalUploadResponse)
-  implicit val internalDownloadResponseFormat: RootJsonFormat[InternalDownloadResponse] = jsonFormat6(InternalDownloadResponse)
-  implicit val internalFileDeleteRequestFormat: RootJsonFormat[InternalFileDeleteRequest] = jsonFormat4(InternalFileDeleteRequest)
-  implicit val internalBatchOperationRequestFormat: RootJsonFormat[InternalBatchOperationRequest] = jsonFormat5(InternalBatchOperationRequest)
+  implicit val internalUploadRequestFormat: RootJsonFormat[InternalUploadRequest] = jsonFormat10(InternalUploadRequest.apply)
+  implicit val internalDownloadRequestFormat: RootJsonFormat[InternalDownloadRequest] = jsonFormat4(InternalDownloadRequest.apply)
+  implicit val internalUploadResponseFormat: RootJsonFormat[InternalUploadResponse] = jsonFormat6(InternalUploadResponse.apply)
+  implicit val internalDownloadResponseFormat: RootJsonFormat[InternalDownloadResponse] = jsonFormat6(InternalDownloadResponse.apply)
+  implicit val internalFileDeleteRequestFormat: RootJsonFormat[InternalFileDeleteRequest] = jsonFormat4(InternalFileDeleteRequest.apply)
+  implicit val internalBatchOperationRequestFormat: RootJsonFormat[InternalBatchOperationRequest] = jsonFormat5(InternalBatchOperationRequest.apply)
+  implicit val avatarUploadResponseFormat: RootJsonFormat[AvatarUploadResponse] = jsonFormat6(AvatarUploadResponse.apply)
+  implicit val fileAccessLogFormat: RootJsonFormat[FileAccessLog] = jsonFormat10(FileAccessLog.apply)
+  implicit def paginatedResponseFormat[T: JsonFormat]: RootJsonFormat[PaginatedResponse[T]] = jsonFormat4(PaginatedResponse[T])
 }
 
 // 内部通信请求/响应模型
@@ -243,4 +246,14 @@ case class InternalBatchOperationRequest(
   requestUserId: Option[String],
   requestUserType: Option[String],
   reason: Option[String] = None
+)
+
+// 头像上传响应
+case class AvatarUploadResponse(
+  fileId: String,
+  fileName: String,
+  fileUrl: String,
+  fileSize: Int,
+  uploadTime: LocalDateTime,
+  message: String
 )
