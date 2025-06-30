@@ -84,10 +84,12 @@ class AuthService(config: ServerConfig) {
         authResponse.data match {
           case Some(userData) =>
             // Check if user is admin (based on type field) or has the required role
-            val userRole = userData.`type`.getOrElse(userData.role.getOrElse(""))
-            if (userRole == requiredRole || (requiredRole == "admin" && userData.`type`.contains("admin"))) {
+            val isAdmin = userData.`type`.contains("admin")
+            val userRole = if (isAdmin) "admin" else userData.role.getOrElse("")
+            
+            if (userRole == requiredRole || (requiredRole == "admin" && isAdmin)) {
               // For admin users, we need to generate a UUID since they don't have userId in response
-              val userId = if (userData.`type`.contains("admin")) {
+              val userId = if (isAdmin) {
                 UUID.fromString("550e8400-e29b-41d4-a716-446655440000") // Use the admin UUID from database
               } else {
                 UUID.randomUUID() // Generate UUID for regular users - this should ideally come from response
@@ -107,9 +109,11 @@ class AuthService(config: ServerConfig) {
       case Right(authResponse) =>
         authResponse.data match {
           case Some(userData) =>
-            val userRole = userData.`type`.getOrElse(userData.role.getOrElse(""))
-            if (allowedRoles.contains(userRole) || (allowedRoles.contains("admin") && userData.`type`.contains("admin"))) {
-              val userId = if (userData.`type`.contains("admin")) {
+            val isAdmin = userData.`type`.contains("admin")
+            val userRole = if (isAdmin) "admin" else userData.role.getOrElse("")
+            
+            if (allowedRoles.contains(userRole) || (allowedRoles.contains("admin") && isAdmin)) {
+              val userId = if (isAdmin) {
                 UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
               } else {
                 UUID.randomUUID()
