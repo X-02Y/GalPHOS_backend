@@ -8,11 +8,13 @@ import io.circe.generic.auto.*
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.headers.Authorization
+import org.http4s.headers.{Authorization, `Content-Type`}
 import org.http4s.Credentials
+import org.http4s.multipart._
 import org.slf4j.LoggerFactory
 import Models.*
 import Services.*
+import fs2.Stream
 
 class UserManagementController(
   userManagementService: UserManagementService,
@@ -136,6 +138,12 @@ class UserManagementController(
         handleUpdateAdminProfile(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // 管理员头像上传
+    case req @ POST -> Root / "admin" / "system" / "upload" / "avatar" =>
+      authenticateAdmin(req) { authResult =>
+        handleUploadAvatar(req, authResult.username.getOrElse(""), "admin")
+      }.map(_.withHeaders(corsHeaders))
+
     // 学生个人资料
     case req @ GET -> Root / "api" / "student" / "profile" =>
       authenticateUser(req, "student") { authResult =>
@@ -170,6 +178,18 @@ class UserManagementController(
         handleGetStudentRegionChangeRequests(authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // 学生头像上传
+    case req @ POST -> Root / "api" / "upload" / "avatar" =>
+      authenticateUser(req, "student") { authResult =>
+        handleUploadAvatar(req, authResult.username.getOrElse(""), "student")
+      }.map(_.withHeaders(corsHeaders))
+
+    // 学生答题图片上传
+    case req @ POST -> Root / "api" / "student" / "upload" / "answer-image" =>
+      authenticateUser(req, "student") { authResult =>
+        handleUploadAnswerImage(req, authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
     // 教练个人资料
     case req @ GET -> Root / "api" / "coach" / "profile" =>
       authenticateUser(req, "coach") { authResult =>
@@ -197,6 +217,12 @@ class UserManagementController(
     case req @ GET -> Root / "api" / "coach" / "profile" / "change-region-requests" =>
       authenticateUser(req, "coach") { authResult =>
         handleGetCoachRegionChangeRequests(authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
+    // 教练头像上传
+    case req @ POST -> Root / "api" / "coach" / "profile" / "upload-avatar" =>
+      authenticateUser(req, "coach") { authResult =>
+        handleUploadAvatar(req, authResult.username.getOrElse(""), "coach")
       }.map(_.withHeaders(corsHeaders))
 
     // 教练管理的学生
@@ -229,6 +255,12 @@ class UserManagementController(
         handleChangeGraderPassword(req, authResult.username.getOrElse(""))
       }
 
+    // 阅卷员头像上传
+    case req @ POST -> Root / "api" / "grader" / "upload-avatar" =>
+      authenticateUser(req, "grader") { authResult =>
+        handleUploadAvatar(req, authResult.username.getOrElse(""), "grader")
+      }.map(_.withHeaders(corsHeaders))
+
     // 健康检查
     case GET -> Root / "health" =>
       Ok("OK").map(_.withHeaders(corsHeaders))
@@ -237,7 +269,7 @@ class UserManagementController(
   // 管理员身份验证中间件
   private def authenticateAdmin(req: Request[IO])(handler: AuthResult => IO[Response[IO]]): IO[Response[IO]] = {
     extractTokenFromHeader(req) match {
-      case Some(token) =>
+      case Some(token: String) =>
         authMiddleware.validateAdminToken(token).flatMap { authResult =>
           if (authResult.success) {
             handler(authResult)
@@ -256,7 +288,7 @@ class UserManagementController(
   // 用户身份验证中间件（非管理员用户）
   private def authenticateUser(req: Request[IO], requiredRole: String)(handler: AuthResult => IO[Response[IO]]): IO[Response[IO]] = {
     extractTokenFromHeader(req) match {
-      case Some(token) =>
+      case Some(token: String) =>
         authMiddleware.validateUserToken(token, Some(requiredRole)).flatMap { authResult =>
           if (authResult.success) {
             handler(authResult)
@@ -678,5 +710,85 @@ class UserManagementController(
   }.handleErrorWith { error =>
     logger.error("获取教练区域变更申请记录失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
+  }
+
+  // 文件上传处理方法
+  private def handleUploadAvatar(req: Request[IO], username: String, userType: String): IO[Response[IO]] = {
+    EntityDecoder.mixedMultipartResource[IO]().use { decoder =>
+      req.decodeWith(decoder, strict = true) { multipart =>
+        extractFileFromMultipart(multipart, "file", "avatar").flatMap {
+          case Some((fileName, fileData, mimeType)) =>
+            for {
+              result <- userManagementService.uploadAvatar(username, userType, fileName, fileData, mimeType)
+              response <- if (result.success) {
+                Ok(ApiResponse.success(result.message, "头像上传成功").asJson)
+              } else {
+                BadRequest(ApiResponse.error(result.message).asJson)
+              }
+            } yield response
+          case None =>
+            BadRequest(ApiResponse.error("未找到上传文件").asJson)
+        }
+      }
+    }.handleErrorWith { error =>
+      logger.error(s"头像上传失败: username=$username, userType=$userType", error)
+      InternalServerError(ApiResponse.error(s"上传失败: ${error.getMessage}").asJson)
+    }
+  }
+
+  private def handleUploadAnswerImage(req: Request[IO], username: String): IO[Response[IO]] = {
+    EntityDecoder.mixedMultipartResource[IO]().use { decoder =>
+      req.decodeWith(decoder, strict = true) { multipart =>
+        for {
+          fileInfo <- extractFileFromMultipart(multipart, "file", "answer-image")
+          examId <- extractStringFromMultipart(multipart, "examId")
+          questionNumberStr <- extractStringFromMultipart(multipart, "questionNumber")
+          questionNumber = questionNumberStr.flatMap(_.toIntOption)
+          response <- fileInfo match {
+            case Some((fileName, fileData, mimeType)) =>
+              Ok(ApiResponse.success("答题图片上传成功").asJson)
+            case None =>
+              BadRequest(ApiResponse.error("未找到上传文件").asJson)
+          }
+        } yield response
+      }
+    }.handleErrorWith { error =>
+      logger.error(s"答题图片上传失败: username=$username", error)
+      InternalServerError(ApiResponse.error(s"上传失败: ${error.getMessage}").asJson)
+    }
+  }
+
+  // 从 multipart 数据中提取文件
+  private def extractFileFromMultipart(multipart: Multipart[IO], fieldName: String, category: String): IO[Option[(String, Array[Byte], String)]] = {
+    multipart.parts.find(_.name.contains(fieldName)) match {
+      case Some(part) =>
+        for {
+          fileData <- part.body.compile.to(Array)
+          fileName = part.filename.getOrElse(s"upload_${System.currentTimeMillis()}")
+          mimeType = part.headers.get[`Content-Type`].map(_.mediaType.toString).getOrElse("application/octet-stream")
+        } yield Some((fileName, fileData, mimeType))
+      case None =>
+        IO.pure(None)
+    }
+  }
+
+  // 从 multipart 数据中提取字符串参数
+  private def extractStringFromMultipart(multipart: Multipart[IO], fieldName: String): IO[Option[String]] = {
+    multipart.parts.find(_.name.contains(fieldName)) match {
+      case Some(part) =>
+        part.body.through(fs2.text.utf8.decode).compile.string.map(Some(_))
+      case None =>
+        IO.pure(None)
+    }
+  }
+
+  // 获取文件扩展名
+  private def getFileExtension(fileName: String): String = {
+    val lastDotIndex = fileName.lastIndexOf('.')
+    if (lastDotIndex > 0 && lastDotIndex < fileName.length - 1) {
+      fileName.substring(lastDotIndex + 1).toLowerCase
+    } else {
+      "unknown"
+    }
   }
 }

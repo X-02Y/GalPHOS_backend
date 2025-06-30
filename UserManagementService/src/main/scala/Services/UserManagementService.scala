@@ -34,11 +34,17 @@ trait UserManagementService {
   
   // 阅卷员密码修改方法（使用不同的参数结构）
   def changeGraderPassword(username: String, request: ChangeGraderPasswordRequest): IO[Unit]
+  
+  // 文件上传相关方法
+  def uploadAvatar(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String): IO[FileOperationResponse]
+  def uploadAnswerImage(username: String, fileName: String, fileData: Array[Byte], mimeType: String, examId: Option[String] = None, questionNumber: Option[Int] = None): IO[FileOperationResponse]
+  def uploadDocument(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String, description: Option[String] = None): IO[FileOperationResponse]
 }
 
 class UserManagementServiceImpl() extends UserManagementService {
   private val logger = LoggerFactory.getLogger("UserManagementService")
   private val schemaName = "authservice"  // 使用固定的schema名称
+  private val config = Config.ConfigLoader.loadConfig() // 添加config变量
 
   override def getPendingUsers(): IO[List[PendingUser]] = {
     val testSql = s"""
@@ -871,5 +877,155 @@ class UserManagementServiceImpl() extends UserManagementService {
       processedBy = DatabaseManager.decodeFieldOptional[String](json, "processed_by"),
       adminComment = DatabaseManager.decodeFieldOptional[String](json, "admin_comment")
     )
+  }
+
+  // 文件上传相关方法实现
+  private lazy val fileStorageClient = Utils.FileStorageClient(config)
+
+  override def uploadAvatar(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String): IO[FileOperationResponse] = {
+    for {
+      // 获取用户ID
+      userIdOpt <- getUserIdByUsername(username)
+      userId = userIdOpt.getOrElse(username) // 如果找不到用户ID，使用username作为fallback
+      
+      // 上传文件到 FileStorageService
+      uploadResult <- fileStorageClient.uploadFile(
+        fileName = fileName,
+        fileData = fileData,
+        mimeType = mimeType,
+        uploadUserId = userId,
+        uploadUserType = userType,
+        category = "avatar",
+        description = Some(s"${userType}头像")
+      )
+      
+      result <- if (uploadResult.success) {
+        val fileId = uploadResult.fileId.getOrElse("")
+        val fileUrl = s"${config.fileStorageService.host}:${config.fileStorageService.port}/files/${fileId}"
+        
+        // 更新用户头像URL
+        updateUserAvatarUrl(username, fileUrl).map { _ =>
+          FileOperationResponse(
+            success = true,
+            message = "头像上传成功",
+            fileUrl = Some(fileUrl),
+            fileId = uploadResult.fileId
+          )
+        }
+      } else {
+        IO.pure(FileOperationResponse(
+          success = false,
+          message = uploadResult.error.getOrElse("上传失败")
+        ))
+      }
+    } yield result
+  }
+
+  override def uploadAnswerImage(username: String, fileName: String, fileData: Array[Byte], mimeType: String, examId: Option[String], questionNumber: Option[Int]): IO[FileOperationResponse] = {
+    for {
+      userIdOpt <- getUserIdByUsername(username)
+      userId = userIdOpt.getOrElse(username)
+      
+      uploadResult <- fileStorageClient.uploadFile(
+        fileName = fileName,
+        fileData = fileData,
+        mimeType = mimeType,
+        uploadUserId = userId,
+        uploadUserType = "student",
+        category = "answer-image",
+        relatedId = examId,
+        description = questionNumber.map(q => s"题目${q}答题图片")
+      )
+      
+      result <- IO.pure(
+        if (uploadResult.success) {
+          val fileId = uploadResult.fileId.getOrElse("")
+          val fileUrl = s"${config.fileStorageService.host}:${config.fileStorageService.port}/files/${fileId}"
+          FileOperationResponse(
+            success = true,
+            message = "答题图片上传成功",
+            fileUrl = Some(fileUrl),
+            fileId = uploadResult.fileId
+          )
+        } else {
+          FileOperationResponse(
+            success = false,
+            message = uploadResult.error.getOrElse("上传失败")
+          )
+        }
+      )
+    } yield result
+  }
+
+  override def uploadDocument(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String, description: Option[String]): IO[FileOperationResponse] = {
+    for {
+      userIdOpt <- getUserIdByUsername(username)
+      userId = userIdOpt.getOrElse(username)
+      
+      uploadResult <- fileStorageClient.uploadFile(
+        fileName = fileName,
+        fileData = fileData,
+        mimeType = mimeType,
+        uploadUserId = userId,
+        uploadUserType = userType,
+        category = "document",
+        description = description
+      )
+      
+      result <- IO.pure(
+        if (uploadResult.success) {
+          val fileId = uploadResult.fileId.getOrElse("")
+          val fileUrl = s"${config.fileStorageService.host}:${config.fileStorageService.port}/files/${fileId}"
+          FileOperationResponse(
+            success = true,
+            message = "文档上传成功",
+            fileUrl = Some(fileUrl),
+            fileId = uploadResult.fileId
+          )
+        } else {
+          FileOperationResponse(
+            success = false,
+            message = uploadResult.error.getOrElse("上传失败")
+          )
+        }
+      )
+    } yield result
+  }
+
+  // 辅助方法：通过用户名获取用户ID
+  private def getUserIdByUsername(username: String): IO[Option[String]] = {
+    val sql = s"""
+      SELECT user_id
+      FROM authservice.user_table
+      WHERE username = ? AND status = 'ACTIVE'
+    """.stripMargin
+
+    val params = List(SqlParameter("String", username))
+
+    DatabaseManager.executeQuery(sql, params).map { results =>
+      results.headOption.map(DatabaseManager.decodeFieldUnsafe[String](_, "user_id"))
+    }.handleErrorWith { error =>
+      logger.warn(s"获取用户ID失败: ${error.getMessage}")
+      IO.pure(None)
+    }
+  }
+
+  // 辅助方法：更新用户头像URL
+  private def updateUserAvatarUrl(username: String, avatarUrl: String): IO[Unit] = {
+    val sql = s"""
+      UPDATE authservice.user_table
+      SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE username = ?
+    """.stripMargin
+
+    val params = List(
+      SqlParameter("String", avatarUrl),
+      SqlParameter("String", username)
+    )
+
+    DatabaseManager.executeUpdate(sql, params).map(_ => ()).handleErrorWith { error =>
+      logger.error(s"更新用户头像URL失败: ${error.getMessage}", error)
+      IO.raiseError(error)
+    }
   }
 }

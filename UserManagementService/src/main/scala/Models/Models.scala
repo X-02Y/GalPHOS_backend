@@ -341,3 +341,34 @@ case class RegionChangeRequestRecord(
   processedBy: Option[String] = None,
   adminComment: Option[String] = None
 )
+
+// 文件上传相关数据模型
+case class FileUploadRequest(
+  category: String,        // "avatar", "document", etc.
+  relatedId: Option[String] = None,
+  description: Option[String] = None
+)
+
+case class FileUploadResponse(
+  fileId: String,
+  fileName: String,
+  fileUrl: String,
+  fileSize: Long,
+  fileType: String,
+  uploadTime: String
+)
+
+case class AvatarUploadResponse(
+  avatarUrl: String,
+  fileName: String,
+  fileSize: Long,
+  uploadTime: String
+)
+
+// 通用文件操作响应
+case class FileOperationResponse(
+  success: Boolean,
+  message: String,
+  fileUrl: Option[String] = None,
+  fileId: Option[String] = None
+)

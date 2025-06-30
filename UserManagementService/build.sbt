@@ -11,6 +11,7 @@ lazy val root = (project in file("."))
       // Web framework
       "org.http4s" %% "http4s-dsl" % "0.23.18",
       "org.http4s" %% "http4s-ember-server" % "0.23.18",
+      "org.http4s" %% "http4s-ember-client" % "0.23.18",
       "org.http4s" %% "http4s-circe" % "0.23.18",
       
       // JSON

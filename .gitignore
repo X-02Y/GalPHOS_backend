@@ -6,4 +6,4 @@ GalPHOS_backend/
 project/target/
 project/project/
 **/.bloop/
-**/logs/
+**/logs/*.log

@@ -22,6 +22,16 @@ case class ServerConfig(
   maximumClientConnection: Int
 )
 
+case class FileStorageServiceConfig(
+  host: String,
+  port: Int,
+  internalApiKey: String,
+  timeout: Int,
+  uploadMaxSize: Long,
+  allowedImageTypes: List[String],
+  allowedDocumentTypes: List[String]
+)
+
 case class ServiceConfig(
   serverIP: String,
   serverPort: Int,
@@ -36,7 +46,8 @@ case class ServiceConfig(
   prepStmtCacheSqlLimit: Int,
   maximumPoolSize: Int,
   connectionLiveMinutes: Int,
-  isTest: Boolean
+  isTest: Boolean,
+  fileStorageService: FileStorageServiceConfig
 ) {
   def toDatabaseConfig: DatabaseConfig = DatabaseConfig(
     jdbcUrl = jdbcUrl,
