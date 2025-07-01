@@ -37,7 +37,12 @@ CREATE TABLE IF NOT EXISTS admin_table (
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     salt TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'super_admin')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    name TEXT,  -- 显示名称
+    avatar_url TEXT,  -- 头像链接
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP
 );
 
 -- 创建Token黑名单表
@@ -113,10 +118,13 @@ CREATE INDEX IF NOT EXISTS idx_region_change_requests_created_at ON region_chang
 -- 插入测试管理员账户
 -- 密码: admin123，前端已进行SHA-256+盐值哈希
 -- 哈希值: 0bb6a396f8c6c7f133f426e8ad6931b91f1d208a265acb66900ece3ca082aa66
--- 使用真实的UUID作为admin_id
-INSERT INTO admin_table (admin_id, username, password_hash, salt) VALUES 
-    ('550e8400-e29b-41d4-a716-446655440000', 'admin', '0bb6a396f8c6c7f133f426e8ad6931b91f1d208a265acb66900ece3ca082aa66', 'GalPHOS_2025_SALT')
-ON CONFLICT (username) DO NOTHING;
+-- 使用真实的UUID作为admin_id，设置为超级管理员
+INSERT INTO admin_table (admin_id, username, password_hash, salt, role, status, name) VALUES 
+    ('550e8400-e29b-41d4-a716-446655440000', 'admin', '0bb6a396f8c6c7f133f426e8ad6931b91f1d208a265acb66900ece3ca082aa66', 'GalPHOS_2025_SALT', 'super_admin', 'active', '系统超级管理员')
+ON CONFLICT (username) DO UPDATE SET 
+    role = EXCLUDED.role,
+    status = EXCLUDED.status,
+    name = EXCLUDED.name;
 
 -- 显示初始化结果
 SELECT 'Admin count:' as info, COUNT(*) as count FROM admin_table

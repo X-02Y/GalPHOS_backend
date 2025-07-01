@@ -58,7 +58,14 @@ class AuthService(
               _ <- IO(logger.info(s"管理员登录验证成功，开始生成token: adminID=${admin.adminID}"))
               token <- tokenService.generateToken(UUID.fromString(admin.adminID), isAdmin = true)
               _ <- IO(logger.info(s"Token生成成功: ${token.take(20)}..."))
-              userInfo = UserInfo(username = admin.username, `type` = Some("admin"))
+              userInfo = UserInfo(
+                username = admin.username, 
+                `type` = Some("admin"),
+                role = Some(admin.role), // 包含管理员角色信息
+                province = None,
+                school = None,
+                avatar = admin.avatarUrl
+              )
               _ <- IO(logger.info(s"返回用户信息: ${userInfo}"))
             } yield Right((userInfo, token))
           } else {

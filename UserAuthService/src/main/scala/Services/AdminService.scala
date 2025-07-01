@@ -19,7 +19,7 @@ class AdminServiceImpl extends AdminService {
 
   override def findAdminByUsername(username: String): IO[Option[Admin]] = {
     val sql = s"""
-      SELECT admin_id, username, password_hash, salt, created_at
+      SELECT admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at, last_login_at
       FROM $schemaName.admin_table
       WHERE username = ?
     """.stripMargin
@@ -37,7 +37,7 @@ class AdminServiceImpl extends AdminService {
 
   override def findAdminById(adminId: String): IO[Option[Admin]] = {
     val sql = s"""
-      SELECT admin_id, username, password_hash, salt, created_at
+      SELECT admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at, last_login_at
       FROM $schemaName.admin_table
       WHERE admin_id = ?
     """.stripMargin
@@ -58,7 +58,13 @@ class AdminServiceImpl extends AdminService {
       adminID = DatabaseManager.decodeFieldUnsafe[String](json, "admin_id"),
       username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
       passwordHash = DatabaseManager.decodeFieldUnsafe[String](json, "password_hash"),
-      salt = DatabaseManager.decodeFieldUnsafe[String](json, "salt")
+      salt = DatabaseManager.decodeFieldUnsafe[String](json, "salt"),
+      role = DatabaseManager.decodeFieldOptional[String](json, "role").getOrElse("admin"),
+      status = DatabaseManager.decodeFieldOptional[String](json, "status").getOrElse("active"),
+      name = DatabaseManager.decodeFieldOptional[String](json, "name"),
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatar_url"),
+      createdAt = DatabaseManager.decodeFieldOptional[java.time.LocalDateTime](json, "created_at"),
+      lastLoginAt = DatabaseManager.decodeFieldOptional[java.time.LocalDateTime](json, "last_login_at")
     )
   }
 }

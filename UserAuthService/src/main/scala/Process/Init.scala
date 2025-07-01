@@ -140,18 +140,24 @@ object Init {
       // 先清理可能存在的无效UUID记录
       _ <- DatabaseManager.executeUpdate("DELETE FROM authservice.admin_table WHERE admin_id = 'admin-001'", List.empty)
       
-      // 插入或更新管理员记录
+      // 插入或更新管理员记录，设置为超级管理员
       _ <- DatabaseManager.executeUpdate("""
-        INSERT INTO authservice.admin_table (admin_id, username, password_hash, salt) VALUES (?, ?, ?, ?) 
+        INSERT INTO authservice.admin_table (admin_id, username, password_hash, salt, role, status, name) VALUES (?, ?, ?, ?, ?, ?, ?) 
         ON CONFLICT (username) DO UPDATE SET 
           admin_id = EXCLUDED.admin_id,
           password_hash = EXCLUDED.password_hash,
-          salt = EXCLUDED.salt
+          salt = EXCLUDED.salt,
+          role = EXCLUDED.role,
+          status = EXCLUDED.status,
+          name = EXCLUDED.name
       """, List(
         SqlParameter("String", adminId),
         SqlParameter("String", "admin"),
         SqlParameter("String", adminHash),
-        SqlParameter("String", Constants.SALT_VALUE)
+        SqlParameter("String", Constants.SALT_VALUE),
+        SqlParameter("String", "super_admin"),
+        SqlParameter("String", "active"),
+        SqlParameter("String", "系统超级管理员")
       ))
     } yield ()
   }

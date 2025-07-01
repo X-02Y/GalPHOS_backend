@@ -173,4 +173,16 @@ object DatabaseManager {
       case Left(error) => throw new RuntimeException(s"解码字段 '$fieldName' 失败: $error")
     }
   }
+
+  // 可选字段解码，返回Option
+  def decodeFieldOptional[T](json: Json, fieldName: String)(using decoder: Decoder[T]): Option[T] = {
+    if (json.hcursor.downField(fieldName).focus.exists(_.isNull)) {
+      None
+    } else {
+      decodeField[T](json, fieldName) match {
+        case Right(value) => Some(value)
+        case Left(_) => None
+      }
+    }
+  }
 }

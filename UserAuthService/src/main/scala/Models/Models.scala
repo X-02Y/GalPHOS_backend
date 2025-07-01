@@ -141,7 +141,12 @@ case class Admin(
   username: String,
   passwordHash: String,
   salt: String,
-  createdAt: Option[java.time.LocalDateTime] = None
+  role: String = "admin",  // admin 或 super_admin
+  status: String = "active", // active 或 disabled
+  name: Option[String] = None,  // 显示名称
+  avatarUrl: Option[String] = None,  // 头像链接
+  createdAt: Option[java.time.LocalDateTime] = None,
+  lastLoginAt: Option[java.time.LocalDateTime] = None
 )
 
 // 省份数据库模型
