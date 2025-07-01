@@ -135,6 +135,12 @@ object DatabaseManager {
               case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
               case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
               case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
+              case "jsonb" | "json" => 
+                val jsonString = param.value.toString
+                val pgObject = new org.postgresql.util.PGobject()
+                pgObject.setType("jsonb")
+                pgObject.setValue(jsonString)
+                statement.setObject(index + 1, pgObject)
               case _ => statement.setObject(index + 1, param.value)
             }
           }
@@ -173,6 +179,12 @@ object DatabaseManager {
               case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
               case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
               case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
+              case "jsonb" | "json" => 
+                val jsonString = param.value.toString
+                val pgObject = new org.postgresql.util.PGobject()
+                pgObject.setType("jsonb")
+                pgObject.setValue(jsonString)
+                statement.setObject(index + 1, pgObject)
               case _ => statement.setObject(index + 1, param.value)
             }
           }
@@ -220,6 +232,12 @@ object DatabaseManager {
                 case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
                 case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
                 case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
+                case "jsonb" | "json" => 
+                  val jsonString = param.value.toString
+                  val pgObject = new org.postgresql.util.PGobject()
+                  pgObject.setType("jsonb")
+                  pgObject.setValue(jsonString)
+                  statement.setObject(index + 1, pgObject)
                 case _ => statement.setObject(index + 1, param.value)
               }
             }

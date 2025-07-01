@@ -47,6 +47,8 @@ object Server extends IOApp {
           .withMaxConnections(config.maximumServerConnection)
           .withHttpApp(httpApp)
           .build
+          
+        _ <- Resource.eval(logger.info(s"Exam Management Service started successfully at ${config.serverIP}:${config.serverPort}"))
       } yield server).useForever.as(ExitCode.Success)
     }.handleErrorWith { error =>
       logger.error(error)(s"Server startup failed: ${error.getMessage}") >>

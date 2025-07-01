@@ -14,17 +14,12 @@ import Config.ServerConfig
 
 class AuthService(config: ServerConfig) {
   private val logger = LoggerFactory.getLogger("AuthService")
-  private val jwtSecret = "your-secret-key" // Should be loaded from config
+  private val jwtSecret = "GalPHOS_2025_SECRET_KEY" // Updated to match UserAuthService
   private val backend = AsyncHttpClientCatsBackend[IO]()
 
   def validateToken(token: String): IO[Option[UserInfo]] = {
-    // First try to decode JWT locally
-    decodeJwtToken(token).flatMap {
-      case Some(userInfo) => IO.pure(Some(userInfo))
-      case None => 
-        // If local validation fails, call auth service
-        validateWithAuthService(token)
-    }
+    // Always validate with AuthService to get complete user information
+    validateWithAuthService(token)
   }
 
   def extractTokenFromHeader(authHeader: String): Option[String] = {
@@ -48,11 +43,14 @@ class AuthService(config: ServerConfig) {
       JwtCirce.decodeJson(token, jwtSecret, Seq(JwtAlgorithm.HS256)).toOption.flatMap { json =>
         val cursor = json.hcursor
         for {
-          id <- cursor.get[String]("userId").toOption
-          username <- cursor.get[String]("username").toOption
-          role <- cursor.get[String]("role").toOption
-          email = cursor.get[String]("email").toOption
-        } yield UserInfo(id, username, role, email)
+          // JWT from UserAuthService has 'sub' (subject) field with userId and 'isAdmin' field
+          userId <- cursor.get[String]("sub").toOption
+          isAdminStr <- cursor.get[String]("isAdmin").toOption
+        } yield {
+          val isAdmin = isAdminStr.toBoolean
+          val role = if (isAdmin) "admin" else "user" // Default role, real role should come from validation
+          UserInfo(userId, "unknown", role, None) // Placeholder values, full info comes from auth service validation
+        }
       }
     } catch {
       case e: Exception =>
@@ -76,11 +74,29 @@ class AuthService(config: ServerConfig) {
               val cursor = json.hcursor
               cursor.get[Boolean]("success").toOption match {
                 case Some(true) =>
-                  cursor.get[UserInfo]("user").toOption match {
-                    case Some(userInfo) => IO.pure(Some(userInfo))
-                    case None => IO.pure(None)
+                  val dataCursor = cursor.downField("data")
+                  // Parse UserAuthService UserInfo structure
+                  val userInfoResult = for {
+                    username <- dataCursor.get[String]("username")
+                    roleOpt = dataCursor.get[String]("role").toOption
+                    typeOpt = dataCursor.get[String]("type").toOption
+                  } yield {
+                    // Determine role from either 'role' or 'type' field
+                    val finalRole = typeOpt.getOrElse(roleOpt.getOrElse("user"))
+                    // Generate a placeholder ID since UserAuthService doesn't return ID in validation
+                    val id = java.util.UUID.nameUUIDFromBytes(username.getBytes).toString
+                    UserInfo(id, username, finalRole, None)
                   }
-                case _ => IO.pure(None)
+                  
+                  userInfoResult match {
+                    case Right(userInfo) => IO.pure(Some(userInfo))
+                    case Left(error) => 
+                      logger.error(s"Failed to parse user info: $error")
+                      IO.pure(None)
+                  }
+                case _ => 
+                  logger.error("Auth service returned success=false")
+                  IO.pure(None)
               }
             case Left(error) =>
               logger.error(s"Auth service response parsing failed: $error")

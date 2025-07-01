@@ -224,4 +224,38 @@ class RegionService(dao: RegionDAO) {
   def getRegionChangeRequestById(id: UUID): IO[Option[RegionChangeRequest]] = {
     dao.getRegionChangeRequestById(id)
   }
+  
+  // Internal API for getting province and school names by IDs
+  def getProvinceAndSchoolByIds(provinceId: String, schoolId: String): IO[Either[String, InternalRegionResponse]] = {
+    // Convert string IDs to UUIDs
+    try {
+      val provinceUuid = UUID.fromString(provinceId)
+      val schoolUuid = UUID.fromString(schoolId)
+      
+      for {
+        provinceOpt <- dao.getProvinceById(provinceUuid)
+        schoolOpt <- dao.getSchoolById(schoolUuid)
+      } yield {
+        (provinceOpt, schoolOpt) match {
+          case (Some(province), Some(school)) =>
+            // Verify that the school belongs to the specified province
+            if (school.provinceId == provinceUuid) {
+              Right(InternalRegionResponse(
+                provinceName = province.name,
+                schoolName = school.name
+              ))
+            } else {
+              Left(s"School with ID $schoolId does not belong to province with ID $provinceId")
+            }
+          case (None, _) =>
+            Left(s"Province not found with ID: $provinceId")
+          case (_, None) =>
+            Left(s"School not found with ID: $schoolId")
+        }
+      }
+    } catch {
+      case _: IllegalArgumentException =>
+        IO.pure(Left("Invalid UUID format for provinceId or schoolId"))
+    }
+  }
 }

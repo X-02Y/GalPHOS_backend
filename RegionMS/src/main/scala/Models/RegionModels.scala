@@ -198,3 +198,24 @@ object AdminRegionsResponse {
   given Decoder[AdminRegionsResponse] = deriveDecoder[AdminRegionsResponse]
   given Encoder[AdminRegionsResponse] = deriveEncoder[AdminRegionsResponse]
 }
+
+// Internal API models
+case class InternalRegionRequest(
+  provinceId: String,
+  schoolId: String
+)
+
+case class InternalRegionResponse(
+  provinceName: String,
+  schoolName: String
+)
+
+object InternalRegionRequest {
+  given Decoder[InternalRegionRequest] = deriveDecoder[InternalRegionRequest]
+  given Encoder[InternalRegionRequest] = deriveEncoder[InternalRegionRequest]
+}
+
+object InternalRegionResponse {
+  given Decoder[InternalRegionResponse] = deriveDecoder[InternalRegionResponse]
+  given Encoder[InternalRegionResponse] = deriveEncoder[InternalRegionResponse]
+}

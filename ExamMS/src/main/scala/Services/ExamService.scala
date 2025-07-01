@@ -225,31 +225,59 @@ class ExamService {
     val examId = UUID.randomUUID().toString
     val now = Instant.now()
     
-    val insertExamSql = """
-      INSERT INTO exams (id, title, description, subject, start_time, end_time, duration, 
-                        total_score, question_count, instructions, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    
-    val totalScore = examData.questions.map(_.score).sum
-    val examParams = List(
-      SqlParameter("uuid", examId),
-      SqlParameter("string", examData.title),
-      SqlParameter("string", examData.description.getOrElse("")),
-      SqlParameter("string", examData.subject),
-      SqlParameter("timestamp", examData.startTime.toString),
-      SqlParameter("timestamp", examData.endTime.toString),
-      SqlParameter("int", examData.duration),
-      SqlParameter("bigdecimal", totalScore),
-      SqlParameter("int", examData.questions.length),
-      SqlParameter("string", examData.instructions.getOrElse("")),
-      SqlParameter("uuid", createdBy)
-    )
+    // Parse time strings to Instant
+    val parseTime = (timeStr: String) => IO {
+      try {
+        Instant.parse(timeStr)
+      } catch {
+        case _: Exception => 
+          // Try parsing as ISO LocalDateTime and convert to UTC
+          java.time.LocalDateTime.parse(timeStr.replace("Z", "")).atZone(java.time.ZoneOffset.UTC).toInstant
+      }
+    }
     
     for {
+      startTime <- parseTime(examData.startTime)
+      endTime <- parseTime(examData.endTime)
+      
+      insertExamSql = """
+        INSERT INTO exams (id, title, description, subject, start_time, end_time, duration, 
+                          total_score, question_count, instructions, settings, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """
+      
+      totalScore = examData.questions.map(_.score).sum
+      settingsJson = examData.settings.map(settings => s"""
+        {
+          "allowLateSubmission": ${settings.allowLateSubmission},
+          "shuffleQuestions": ${settings.shuffleQuestions},
+          "showResultsImmediately": ${settings.showResultsImmediately},
+          "maxAttempts": ${settings.maxAttempts},
+          "requirePassword": ${settings.requirePassword},
+          "examPassword": ${settings.examPassword.map(p => s""""$p"""").getOrElse("null")}
+        }
+      """.trim).getOrElse("{}")
+      
+      examParams = List(
+        SqlParameter("uuid", examId),
+        SqlParameter("string", examData.title),
+        SqlParameter("string", examData.description.getOrElse("")),
+        SqlParameter("string", examData.subject),
+        SqlParameter("timestamp", java.sql.Timestamp.from(startTime)),
+        SqlParameter("timestamp", java.sql.Timestamp.from(endTime)),
+        SqlParameter("int", examData.duration),
+        SqlParameter("bigdecimal", totalScore),
+        SqlParameter("int", examData.questions.length),
+        SqlParameter("string", examData.instructions.getOrElse("")),
+        SqlParameter("jsonb", settingsJson),
+        SqlParameter("uuid", createdBy),
+        SqlParameter("timestamp", java.sql.Timestamp.from(now)),
+        SqlParameter("timestamp", java.sql.Timestamp.from(now))
+      )
+      
       _ <- DatabaseManager.executeUpdate(insertExamSql, examParams)
-      _ <- insertQuestions(examId, examData.questions)
-      _ <- insertQuestionScores(examId, examData.questions)
+      _ <- if (examData.questions.nonEmpty) insertQuestions(examId, examData.questions) else IO.unit
+      _ <- if (examData.questions.nonEmpty) insertQuestionScores(examId, examData.questions) else IO.unit
       examOpt <- getExamById(examId)
     } yield examOpt.getOrElse(throw new RuntimeException("Failed to create exam"))
   }
@@ -446,7 +474,7 @@ class ExamService {
     val operations = questions.map { question =>
       val sql = """
         INSERT INTO questions (exam_id, question_number, content, question_type, score, options, correct_answer)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?::question_type, ?, ?, ?)
       """
       val params = List(
         SqlParameter("uuid", examId),
@@ -454,7 +482,7 @@ class ExamService {
         SqlParameter("string", question.content),
         SqlParameter("string", question.questionType.toString),
         SqlParameter("bigdecimal", question.score),
-        SqlParameter("string", question.options.map(_.asJson.noSpaces).getOrElse("null")),
+        SqlParameter("jsonb", question.options.map(_.asJson.noSpaces).getOrElse("null")),
         SqlParameter("string", question.correctAnswer.getOrElse(""))
       )
       (sql, params)

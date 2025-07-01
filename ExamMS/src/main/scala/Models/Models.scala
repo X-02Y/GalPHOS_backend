@@ -20,6 +20,47 @@ case class LoginRequest(username: String, password: String)
 case class AuthResponse(success: Boolean, token: Option[String], message: String, user: Option[UserInfo])
 case class UserInfo(id: String, username: String, role: String, email: Option[String])
 
+// Exam Request Models
+case class CreateExamRequest(
+  title: String,
+  description: Option[String],
+  subject: String,
+  startTime: String, // ISO string format
+  endTime: String,   // ISO string format
+  duration: Int,     // in minutes
+  instructions: Option[String],
+  settings: Option[ExamSettings],
+  questions: List[CreateQuestionRequest] = List.empty
+)
+
+case class CreateQuestionRequest(
+  number: Int = 1, // Question number/order
+  content: String,
+  questionType: String, // multiple_choice, short_answer, essay, calculation
+  score: BigDecimal,
+  options: Option[List[String]] = None,
+  correctAnswer: Option[String] = None
+)
+
+case class UpdateExamRequest(
+  title: Option[String],
+  description: Option[String],
+  subject: Option[String],
+  startTime: Option[String],
+  endTime: Option[String],
+  duration: Option[Int],
+  instructions: Option[String],
+  settings: Option[ExamSettings]
+)
+
+case class SetQuestionScoresRequest(
+  scores: List[QuestionScore]
+)
+
+case class ExportScoreRequest(
+  format: String // csv, excel, pdf
+)
+
 // Pagination
 case class PaginationInfo(page: Int, limit: Int, total: Int, totalPages: Int)
 
@@ -254,42 +295,6 @@ case class AdminExam(
   updatedAt: Instant
 )
 
-case class CreateExamRequest(
-  title: String,
-  description: Option[String],
-  subject: String,
-  startTime: Instant,
-  endTime: Instant,
-  duration: Int,
-  instructions: Option[String],
-  questions: List[CreateQuestionRequest],
-  settings: Option[ExamSettings]
-)
-
-case class CreateQuestionRequest(
-  number: Int,
-  content: String,
-  questionType: QuestionType,
-  score: BigDecimal,
-  options: Option[List[String]] = None,
-  correctAnswer: Option[String] = None
-)
-
-case class UpdateExamRequest(
-  title: Option[String],
-  description: Option[String],
-  subject: Option[String],
-  startTime: Option[Instant],
-  endTime: Option[Instant],
-  duration: Option[Int],
-  instructions: Option[String],
-  settings: Option[ExamSettings]
-)
-
-case class SetQuestionScoresRequest(
-  scores: List[QuestionScore]
-)
-
 // Response Models
 case class ExamsResponse(
   exams: List[Exam],
@@ -361,3 +366,5 @@ case class ErrorResponse(
   code: String,
   details: Option[Map[String, String]] = None
 )
+
+

@@ -292,6 +292,26 @@ class RegionController(regionService: RegionService, authService: AuthService) {
           BadRequest(StandardResponse.error(s"Invalid request: ${error.getMessage}").asJson)
         }
       }
+    
+    // Internal API endpoint for other microservices
+    case GET -> Root / "internal" / "regions" :? ProvinceIdQueryParamMatcher(provinceIdOpt) +& SchoolIdQueryParamMatcher(schoolIdOpt) =>
+      (provinceIdOpt, schoolIdOpt) match {
+        case (Some(Valid(provinceId)), Some(Valid(schoolId))) =>
+          regionService.getProvinceAndSchoolByIds(provinceId.toString, schoolId.toString).flatMap {
+            case Right(response) =>
+              Ok(response.asJson)
+            case Left(error) =>
+              BadRequest(Map("error" -> error).asJson)
+          }.handleErrorWith { error =>
+            InternalServerError(Map("error" -> s"Failed to fetch region data: ${error.getMessage}").asJson)
+          }
+        case (provinceIdOpt, schoolIdOpt) =>
+          val missingParams = List(
+            if (provinceIdOpt.isEmpty || provinceIdOpt.exists(_.isInvalid)) Some("provinceId") else None,
+            if (schoolIdOpt.isEmpty || schoolIdOpt.exists(_.isInvalid)) Some("schoolId") else None
+          ).flatten
+          BadRequest(Map("error" -> s"Missing or invalid required parameters: ${missingParams.mkString(", ")}").asJson)
+      }
   }
 }
 
@@ -305,6 +325,7 @@ implicit val uuidQueryParamDecoder: QueryParamDecoder[UUID] =
   )
 
 object ProvinceIdQueryParamMatcher extends OptionalValidatingQueryParamDecoderMatcher[UUID]("provinceId")
+object SchoolIdQueryParamMatcher extends OptionalValidatingQueryParamDecoderMatcher[UUID]("schoolId")
 object StatusQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("status")
 object PageQueryParamMatcher extends OptionalValidatingQueryParamDecoderMatcher[Int]("page")
 object LimitQueryParamMatcher extends OptionalValidatingQueryParamDecoderMatcher[Int]("limit")
