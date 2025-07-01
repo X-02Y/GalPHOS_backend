@@ -1,0 +1,19 @@
+{
+  "serverIP": "127.0.0.1",
+  "serverPort": 3004,
+  "maximumServerConnection": 10000,
+  "maximumClientConnection": 10000,
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/galphos?currentSchema=submissionservice",
+  "username": "db",
+  "password": "root",
+  "prepStmtCacheSize": 250,
+  "prepStmtCacheSqlLimit": 2048,
+  "maximumPoolSize": 10,
+  "connectionLiveMinutes": 10,
+  "isTest": false,
+  "authServiceUrl": "http://localhost:3001",
+  "examServiceUrl": "http://localhost:3003",
+  "fileStorageServiceUrl": "http://localhost:3008",
+  "maxFileSize": 10485760,
+  "allowedFileTypes": ["jpg", "jpeg", "png", "pdf"]
+}
