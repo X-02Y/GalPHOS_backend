@@ -135,10 +135,8 @@ class UserServiceImpl(regionServiceClient: RegionServiceClient) extends UserServ
 
   override def getUserInfo(username: String, role: String): IO[UserInfo] = {
     val sql = s"""
-      SELECT u.username, u.role, p.name as province_name, s.name as school_name, u.avatar_url
+      SELECT u.username, u.role, u.province_id, u.school_id, u.avatar_url
       FROM $schemaName.user_table u
-      LEFT JOIN $schemaName.province_table p ON u.province_id = p.province_id
-      LEFT JOIN $schemaName.school_table s ON u.school_id = s.school_id
       WHERE u.username = ?
     """.stripMargin
     
@@ -156,13 +154,45 @@ class UserServiceImpl(regionServiceClient: RegionServiceClient) extends UserServ
             case "阅卷者角色" => "grader"
             case _ => "student" // 默认值
           }
-          IO.pure(UserInfo(
-            username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
-            role = Some(apiRole),
-            province = json.hcursor.downField("province_name").as[String].toOption,
-            school = json.hcursor.downField("school_name").as[String].toOption,
-            avatar = json.hcursor.downField("avatar_url").as[String].toOption
-          ))
+          
+          val provinceIdOpt = json.hcursor.downField("province_id").as[String].toOption
+          val schoolIdOpt = json.hcursor.downField("school_id").as[String].toOption
+          
+          // 通过RegionMS内部API获取地区名称
+          (provinceIdOpt, schoolIdOpt) match {
+            case (Some(provinceId), Some(schoolId)) =>
+              for {
+                regionResult <- regionServiceClient.getProvinceAndSchoolNamesByIds(provinceId, schoolId)
+                userInfo <- regionResult match {
+                  case Right(regionNames) =>
+                    IO.pure(UserInfo(
+                      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+                      role = Some(apiRole),
+                      province = Some(regionNames.provinceName),
+                      school = Some(regionNames.schoolName),
+                      avatar = json.hcursor.downField("avatar_url").as[String].toOption
+                    ))
+                  case Left(error) =>
+                    logger.warn(s"获取地区名称失败: $error，将返回不含地区名称的用户信息")
+                    IO.pure(UserInfo(
+                      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+                      role = Some(apiRole),
+                      province = None,
+                      school = None,
+                      avatar = json.hcursor.downField("avatar_url").as[String].toOption
+                    ))
+                }
+              } yield userInfo
+            case _ =>
+              logger.warn(s"用户 $username 缺少province_id或school_id，无法获取地区名称")
+              IO.pure(UserInfo(
+                username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+                role = Some(apiRole),
+                province = None,
+                school = None,
+                avatar = json.hcursor.downField("avatar_url").as[String].toOption
+              ))
+          }
         case None => 
           IO.raiseError(new RuntimeException(s"用户不存在: $username"))
       }

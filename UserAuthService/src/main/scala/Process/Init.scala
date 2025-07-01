@@ -25,7 +25,7 @@ object Init {
       _ <- IO(logger.info("数据库表初始化完成"))
       
       // 创建服务实例
-      regionServiceClient = new RegionServiceClientImpl("http://localhost:3007")  // RegionMS 的地址
+      regionServiceClient = new RegionServiceClientImpl(config.getRegionServiceUrl)  // 从配置获取RegionMS地址
       userService = new UserServiceImpl(regionServiceClient)
       adminService = new AdminServiceImpl()
       tokenService = new TokenServiceImpl(config)
@@ -55,22 +55,7 @@ object Init {
 
   private def createTables(): IO[Unit] = {
     val createTablesSql = List(
-      // 省份表
-      """CREATE TABLE IF NOT EXISTS authservice.province_table (
-          province_id VARCHAR NOT NULL PRIMARY KEY,
-          name TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )""",
-      
-      // 学校表  
-      """CREATE TABLE IF NOT EXISTS authservice.school_table (
-          school_id VARCHAR NOT NULL PRIMARY KEY,
-          province_id VARCHAR NOT NULL REFERENCES authservice.province_table(province_id),
-          name TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )""",
-      
-      // 用户表
+      // 用户表（移除地区表外键约束，改为存储地区ID字符串）
       """CREATE TABLE IF NOT EXISTS authservice.user_table (
           user_id VARCHAR NOT NULL PRIMARY KEY,
           username TEXT NOT NULL UNIQUE,
@@ -79,11 +64,12 @@ object Init {
           salt TEXT NOT NULL,
           role TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'PENDING',
-          province_id VARCHAR REFERENCES authservice.province_table(province_id),
-          school_id VARCHAR REFERENCES authservice.school_table(school_id),
+          province_id VARCHAR,  -- 存储RegionMS的province UUID
+          school_id VARCHAR,    -- 存储RegionMS的school UUID
           avatar_url TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          approved_at TIMESTAMP
       )""",
       
       // 管理员表

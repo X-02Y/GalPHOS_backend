@@ -27,6 +27,7 @@ case class ServerConfig(
   prepStmtCacheSqlLimit: Int,
   maximumPoolSize: Int,
   connectionLiveMinutes: Int,
+  regionServiceUrl: Option[String] = None,
   isTest: Boolean,
   jwtSecret: Option[String] = None,
   jwtExpirationHours: Option[Int] = None,
@@ -40,6 +41,10 @@ case class ServerConfig(
   
   // 获取盐值，优先使用配置文件中的值，否则使用默认值
   def getSaltValue: String = saltValue.getOrElse("GalPHOS_2025_SALT")
+  
+  // 获取RegionMS服务URL，优先使用配置文件中的值，否则使用默认值
+  def getRegionServiceUrl: String = regionServiceUrl.getOrElse("http://localhost:3007")
+  
   // 将数据库相关配置转换为 DatabaseConfig
   def toDatabaseConfig: DatabaseConfig = DatabaseConfig(
     jdbcUrl = jdbcUrl,
