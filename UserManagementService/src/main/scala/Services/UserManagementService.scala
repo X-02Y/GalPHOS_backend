@@ -3,6 +3,7 @@ package Services
 import Models.*
 import Database.{DatabaseManager, SqlParameter}
 import cats.effect.IO
+import cats.implicits.*
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 import java.util.UUID
@@ -46,6 +47,7 @@ class UserManagementServiceImpl() extends UserManagementService {
   private val logger = LoggerFactory.getLogger("UserManagementService")
   private val schemaName = "authservice"  // 使用固定的schema名称
   private val config = Config.ConfigLoader.loadConfig() // 添加config变量
+  private val regionClient = RegionServiceClient(config.regionServiceUrl.getOrElse("http://localhost:3007"))
 
   override def getPendingUsers(): IO[List[PendingUser]] = {
     val testSql = s"""
@@ -61,13 +63,11 @@ class UserManagementServiceImpl() extends UserManagementService {
         u.username,
         u.phone,
         u.role,
-        p.name as province,
-        s.name as school,
+        u.province_id,
+        u.school_id,
         COALESCE(u.created_at, CURRENT_TIMESTAMP) as appliedAt,
         u.status
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       WHERE u.status = ?
       ORDER BY u.created_at DESC
     """.stripMargin
@@ -91,9 +91,11 @@ class UserManagementServiceImpl() extends UserManagementService {
       _ <- IO(logger.info(s"查询到 ${results.length} 条待审核用户记录"))
       // 添加原始数据日志
       _ <- IO(results.headOption.foreach(json => logger.info(s"第一条记录原始数据: $json")))
-      users = results.map(convertToPendingUser)
-      _ <- IO(logger.info(s"转换后的用户数量: ${users.length}"))
-    } yield users
+      
+      // 转换用户数据，使用内部API获取省份学校名称
+      usersIO <- results.traverse(json => convertToPendingUserWithRegionAsync(json))
+      _ <- IO(logger.info(s"转换后的用户数量: ${usersIO.length}"))
+    } yield usersIO
   }
 
   override def getApprovedUsers(params: QueryParams): IO[PaginatedResponse[ApprovedUser]] = {
@@ -142,15 +144,13 @@ class UserManagementServiceImpl() extends UserManagementService {
         u.username,
         u.phone,
         u.role,
-        p.name as province,
-        s.name as school,
+        u.province_id,
+        u.school_id,
         u.status,
         u.approved_at as approved_at,
         u.updated_at as lastLoginAt,
         u.avatar_url as avatarUrl
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       $whereClause
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
@@ -166,8 +166,10 @@ class UserManagementServiceImpl() extends UserManagementService {
       total = totalResult.map(DatabaseManager.decodeFieldUnsafe[Int](_, "total")).getOrElse(0)
       
       dataResults <- DatabaseManager.executeQuery(dataSql, dataParams)
-      users = dataResults.map(convertToApprovedUser)
-    } yield PaginatedResponse(users, total, page, limit)
+      
+      // 使用内部API转换用户数据
+      usersIO <- dataResults.traverse(json => convertToApprovedUserWithRegionAsync(json))
+    } yield PaginatedResponse(usersIO, total, page, limit)
   }
 
   override def approveUser(request: UserApprovalRequest): IO[Unit] = {
@@ -248,15 +250,13 @@ class UserManagementServiceImpl() extends UserManagementService {
         u.username,
         u.phone,
         u.role,
-        p.name as province,
-        s.name as school,
+        u.province_id,
+        u.school_id,
         u.status,
         u.approved_at as approved_at,
         u.updated_at as lastLoginAt,
         u.avatar_url as avatarUrl
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       WHERE u.user_id = ?
     """.stripMargin
 
@@ -264,7 +264,11 @@ class UserManagementServiceImpl() extends UserManagementService {
 
     for {
       result <- DatabaseManager.executeQueryOptional(sql, params)
-    } yield result.map(convertToApprovedUser)
+      userOpt <- result match {
+        case Some(json) => convertToApprovedUserWithRegionAsync(json).map(Some(_))
+        case None => IO.pure(None)
+      }
+    } yield userOpt
   }
 
   override def getUsersByRole(role: UserRole, status: Option[UserStatus] = None): IO[List[ApprovedUser]] = {
@@ -286,22 +290,20 @@ class UserManagementServiceImpl() extends UserManagementService {
         u.username,
         u.phone,
         u.role,
-        p.name as province,
-        s.name as school,
+        u.province_id,
+        u.school_id,
         u.status,
         u.approved_at as approved_at,
         u.updated_at as lastLoginAt,
         u.avatar_url as avatarUrl
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       WHERE $whereClause
       ORDER BY u.username
     """.stripMargin
 
     for {
       results <- DatabaseManager.executeQuery(sql, params)
-      users = results.map(convertToApprovedUser)
+      users <- results.traverse(json => convertToApprovedUserWithRegionAsync(json))
     } yield users
   }
 
@@ -343,14 +345,12 @@ class UserManagementServiceImpl() extends UserManagementService {
         u.username,
         u.phone,
         u.role,
-        p.name as province,
-        s.name as school,
+        u.province_id,
+        u.school_id,
         u.avatar_url as avatarUrl,
         u.created_at as createdAt,
         u.updated_at as lastLoginAt
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       WHERE u.username = ?
     """.stripMargin
 
@@ -358,7 +358,11 @@ class UserManagementServiceImpl() extends UserManagementService {
 
     for {
       result <- DatabaseManager.executeQueryOptional(sql, params)
-    } yield result.map(convertToUserProfile)
+      userProfileOpt <- result match {
+        case Some(json) => convertToUserProfileWithRegionAsync(json).map(Some(_))
+        case None => IO.pure(None)
+      }
+    } yield userProfileOpt
   }
 
   override def updateUserProfile(username: String, request: UpdateProfileRequest): IO[Unit] = {
@@ -389,16 +393,14 @@ class UserManagementServiceImpl() extends UserManagementService {
         sqlParams += SqlParameter("String", phone)
       }
 
-      // 省份更新
-      _ = request.province.foreach { province =>
-        updateFields += "province_id = (SELECT province_id FROM authservice.province_table WHERE name = ?)"
-        sqlParams += SqlParameter("String", province)
+      // 注意：省份和学校的更新需要通过RegionMS API获取对应的ID
+      // 暂时移除直接的省份学校更新功能，需要前端传递ID而非名称
+      _ = request.province.foreach { _ =>
+        logger.warn("省份更新功能暂时不可用，需要通过RegionMS API获取对应的ID")
       }
 
-      // 学校更新
-      _ = request.school.foreach { school =>
-        updateFields += "school_id = (SELECT school_id FROM authservice.school_table WHERE name = ?)"
-        sqlParams += SqlParameter("String", school)
+      _ = request.school.foreach { _ =>
+        logger.warn("学校更新功能暂时不可用，需要通过RegionMS API获取对应的ID")
       }
 
       // 头像更新（支持前端的avatar字段和后端的avatarUrl字段）
@@ -603,100 +605,6 @@ class UserManagementServiceImpl() extends UserManagementService {
     }
   }
 
-  // 转换方法
-  private def convertToPendingUser(json: io.circe.Json): PendingUser = {
-    try {
-      val roleStr = DatabaseManager.decodeFieldUnsafe[String](json, "role")
-      logger.info(s"转换待审核用户，角色字符串: '$roleStr'")
-      
-      PendingUser(
-        id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-        username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
-        phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
-        role = UserRole.fromString(roleStr),
-        province = DatabaseManager.decodeFieldOptional[String](json, "province"),
-        school = DatabaseManager.decodeFieldOptional[String](json, "school"),
-        appliedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "appliedAt").getOrElse(LocalDateTime.now()),
-        status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status"))
-      )
-    } catch {
-      case e: Exception =>
-        logger.error(s"转换待审核用户失败: ${e.getMessage}, JSON: $json")
-        throw e
-    }
-  }
-
-  private def convertToApprovedUser(json: io.circe.Json): ApprovedUser = {
-    // 添加调试日志
-    logger.info(s"转换ApprovedUser，JSON数据: $json")
-    
-    // 尝试先解码为字符串，然后转换为LocalDateTime
-    val approvedAtOpt = DatabaseManager.decodeFieldOptional[String](json, "approved_at").flatMap { timeStr =>
-      try {
-        // 处理PostgreSQL的时间戳格式：2025-06-29 15:03:13.378494
-        val formattedTimeStr = if (timeStr.contains(" ")) {
-          // 替换空格为T，并处理微秒部分
-          val parts = timeStr.split("\\.")
-          if (parts.length == 2) {
-            // 有微秒部分，截取到6位微秒
-            val microseconds = parts(1).take(6).padTo(6, '0')
-            s"${parts(0).replace(" ", "T")}.$microseconds"
-          } else {
-            // 没有微秒部分
-            timeStr.replace(" ", "T")
-          }
-        } else {
-          timeStr
-        }
-        Some(LocalDateTime.parse(formattedTimeStr))
-      } catch {
-        case e: Exception =>
-          logger.warn(s"解析审核时间失败: $timeStr, 错误: ${e.getMessage}")
-          None
-      }
-    }
-    logger.info(s"解码approvedAt字段结果: $approvedAtOpt")
-    
-    // 解码最后登录时间
-    val lastLoginAtOpt = DatabaseManager.decodeFieldOptional[String](json, "lastloginat").flatMap { timeStr =>
-      try {
-        // 处理PostgreSQL的时间戳格式：2025-06-29 15:03:13.378494
-        val formattedTimeStr = if (timeStr.contains(" ")) {
-          // 替换空格为T，并处理微秒部分
-          val parts = timeStr.split("\\.")
-          if (parts.length == 2) {
-            // 有微秒部分，截取到6位微秒
-            val microseconds = parts(1).take(6).padTo(6, '0')
-            s"${parts(0).replace(" ", "T")}.$microseconds"
-          } else {
-            // 没有微秒部分
-            timeStr.replace(" ", "T")
-          }
-        } else {
-          timeStr
-        }
-        Some(LocalDateTime.parse(formattedTimeStr))
-      } catch {
-        case e: Exception =>
-          logger.warn(s"解析最后登录时间失败: $timeStr, 错误: ${e.getMessage}")
-          None
-      }
-    }
-    
-    ApprovedUser(
-      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
-      phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
-      role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
-      province = DatabaseManager.decodeFieldOptional[String](json, "province"),
-      school = DatabaseManager.decodeFieldOptional[String](json, "school"),
-      status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
-      approvedAt = approvedAtOpt,
-      lastLoginAt = lastLoginAtOpt,
-      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
-    )
-  }
-
   private def convertToStudentRegistrationRequest(json: io.circe.Json): StudentRegistrationRequest = {
     StudentRegistrationRequest(
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
@@ -848,11 +756,9 @@ class UserManagementServiceImpl() extends UserManagementService {
       (id, user_id, username, role, current_province, current_school, 
        requested_province, requested_school, reason, status, created_at)
       SELECT ?, u.user_id, u.username, u.role, 
-             COALESCE(p.name, ''), COALESCE(s.name, ''),
+             '', '',  -- 当前省份和学校名称暂时为空，需要通过RegionMS API获取
              ?, ?, ?, 'pending', CURRENT_TIMESTAMP
       FROM authservice.user_table u
-      LEFT JOIN authservice.province_table p ON u.province_id = p.province_id
-      LEFT JOIN authservice.school_table s ON u.school_id = s.school_id
       WHERE u.username = ?
     """.stripMargin
 
@@ -1057,6 +963,197 @@ class UserManagementServiceImpl() extends UserManagementService {
     DatabaseManager.executeUpdate(sql, params).map(_ => ()).handleErrorWith { error =>
       logger.error(s"更新用户头像URL失败: ${error.getMessage}", error)
       IO.raiseError(error)
+    }
+  }
+
+  // 使用RegionMS内部API根据ID获取省份和学校名称的辅助方法
+  private def getRegionNamesByIds(provinceId: String, schoolId: String, username: String): IO[Option[(String, String)]] = {
+    regionClient.getProvinceAndSchoolNamesByIds(provinceId, schoolId).map {
+      case Right(response) =>
+        logger.info(s"用户 $username: 通过内部API获取到省份='${response.provinceName}', 学校='${response.schoolName}'")
+        Some((response.provinceName, response.schoolName))
+      case Left(error) =>
+        logger.warn(s"用户 $username: 内部API调用失败: $error")
+        None
+    }.handleErrorWith { ex =>
+      logger.error(s"用户 $username: 调用RegionMS内部API异常: ${ex.getMessage}", ex)
+      IO.pure(None)
+    }
+  }
+
+  // 新的异步转换方法 - 使用RegionMS内部API
+  private def convertToPendingUserWithRegionAsync(json: io.circe.Json): IO[PendingUser] = {
+    try {
+      val roleStr = DatabaseManager.decodeFieldUnsafe[String](json, "role")
+      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
+      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
+      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
+      
+      // 如果有省份ID和学校ID，使用内部API获取名称
+      val regionNamesIO = (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
+          getRegionNamesByIds(pId, sId, username)
+        case _ =>
+          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
+          IO.pure(None)
+      }
+      
+      regionNamesIO.map { regionNamesOpt =>
+        val (provinceName, schoolName) = regionNamesOpt match {
+          case Some((pName, sName)) => (Some(pName), Some(sName))
+          case None => (None, None)
+        }
+        
+        logger.info(s"转换待审核用户 $username，角色: '$roleStr', 省份: $provinceName, 学校: $schoolName")
+        
+        PendingUser(
+          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+          username = username,
+          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+          role = UserRole.fromString(roleStr),
+          province = provinceName,
+          school = schoolName,
+          appliedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "appliedAt").getOrElse(LocalDateTime.now()),
+          status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status"))
+        )
+      }
+    } catch {
+      case e: Exception =>
+        logger.error(s"转换待审核用户失败: ${e.getMessage}, JSON: $json")
+        IO.raiseError(e)
+    }
+  }
+
+  // 新的异步转换方法 - 使用RegionMS内部API转换ApprovedUser
+  private def convertToApprovedUserWithRegionAsync(json: io.circe.Json): IO[ApprovedUser] = {
+    try {
+      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
+      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
+      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
+      
+      // 如果有省份ID和学校ID，使用内部API获取名称
+      val regionNamesIO = (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
+          getRegionNamesByIds(pId, sId, username)
+        case _ =>
+          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
+          IO.pure(None)
+      }
+      
+      regionNamesIO.map { regionNamesOpt =>
+        val (provinceName, schoolName) = regionNamesOpt match {
+          case Some((pName, sName)) => (Some(pName), Some(sName))
+          case None => (None, None)
+        }
+        
+        logger.info(s"转换已审核用户 $username，省份: $provinceName, 学校: $schoolName")
+        
+        // 处理时间字段
+        val approvedAtOpt = DatabaseManager.decodeFieldOptional[String](json, "approved_at").flatMap { timeStr =>
+          try {
+            val formattedTimeStr = if (timeStr.contains(" ")) {
+              val parts = timeStr.split("\\.")
+              if (parts.length == 2) {
+                val microseconds = parts(1).take(6).padTo(6, '0')
+                s"${parts(0).replace(" ", "T")}.$microseconds"
+              } else {
+                timeStr.replace(" ", "T")
+              }
+            } else {
+              timeStr
+            }
+            Some(LocalDateTime.parse(formattedTimeStr))
+          } catch {
+            case e: Exception =>
+              logger.warn(s"解析审核时间失败: $timeStr, 错误: ${e.getMessage}")
+              None
+          }
+        }
+
+        val lastLoginAtOpt = DatabaseManager.decodeFieldOptional[String](json, "lastloginat").flatMap { timeStr =>
+          try {
+            val formattedTimeStr = if (timeStr.contains(" ")) {
+              val parts = timeStr.split("\\.")
+              if (parts.length == 2) {
+                val microseconds = parts(1).take(6).padTo(6, '0')
+                s"${parts(0).replace(" ", "T")}.$microseconds"
+              } else {
+                timeStr.replace(" ", "T")
+              }
+            } else {
+              timeStr
+            }
+            Some(LocalDateTime.parse(formattedTimeStr))
+          } catch {
+            case e: Exception =>
+              logger.warn(s"解析最后登录时间失败: $timeStr, 错误: ${e.getMessage}")
+              None
+          }
+        }
+
+        ApprovedUser(
+          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+          username = username,
+          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+          role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
+          province = provinceName,
+          school = schoolName,
+          status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
+          approvedAt = approvedAtOpt,
+          lastLoginAt = lastLoginAtOpt,
+          avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
+        )
+      }
+    } catch {
+      case e: Exception =>
+        logger.error(s"转换已审核用户失败: ${e.getMessage}, JSON: $json")
+        IO.raiseError(e)
+    }
+  }
+
+  // 新的异步转换方法 - 使用RegionMS内部API转换UserProfile
+  private def convertToUserProfileWithRegionAsync(json: io.circe.Json): IO[UserProfile] = {
+    try {
+      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
+      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
+      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
+      
+      // 如果有省份ID和学校ID，使用内部API获取名称
+      val regionNamesIO = (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
+          getRegionNamesByIds(pId, sId, username)
+        case _ =>
+          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
+          IO.pure(None)
+      }
+      
+      regionNamesIO.map { regionNamesOpt =>
+        val (provinceName, schoolName) = regionNamesOpt match {
+          case Some((pName, sName)) => (Some(pName), Some(sName))
+          case None => (None, None)
+        }
+        
+        logger.info(s"转换用户资料 $username，省份: $provinceName, 学校: $schoolName")
+        
+        UserProfile(
+          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+          username = username,
+          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+          role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")).value,
+          province = provinceName,
+          school = schoolName,
+          avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl"),
+          createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
+          lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString)
+        )
+      }
+    } catch {
+      case e: Exception =>
+        logger.error(s"转换用户资料失败: ${e.getMessage}, JSON: $json")
+        IO.raiseError(e)
     }
   }
 }

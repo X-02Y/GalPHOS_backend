@@ -12,5 +12,6 @@
   "prepStmtCacheSqlLimit":  2048,
   "maximumPoolSize": 3,
   "connectionLiveMinutes": 10,
+  "regionServiceUrl": "http://localhost:3007",
   "isTest": false
 }

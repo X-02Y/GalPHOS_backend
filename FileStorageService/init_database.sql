@@ -1,8 +1,7 @@
--- FileStorageService 数据库表结构初始化脚本
--- 适用于 PostgreSQL
--- 请先使用 create_database.sql 创建数据库和用户
-
--- 连接到 file_storage 数据库后执行此脚本
+-- GalPHOS 文件存储服务数据库初始化脚本
+-- 统一数据库初始化脚本
+-- 数据库: file_storage
+-- Schema: filestorage
 
 -- 创建 schema
 CREATE SCHEMA IF NOT EXISTS filestorage;
@@ -11,7 +10,7 @@ CREATE SCHEMA IF NOT EXISTS filestorage;
 SET search_path TO filestorage;
 
 -- 创建文件信息表
-CREATE TABLE IF NOT EXISTS filestorage.files (
+CREATE TABLE IF NOT EXISTS files (
     file_id VARCHAR(36) PRIMARY KEY,
     original_name VARCHAR(255) NOT NULL,
     stored_name VARCHAR(255) NOT NULL,
@@ -35,9 +34,9 @@ CREATE TABLE IF NOT EXISTS filestorage.files (
 );
 
 -- 创建文件访问日志表
-CREATE TABLE IF NOT EXISTS filestorage.file_access_log (
+CREATE TABLE IF NOT EXISTS file_accesses (
     log_id SERIAL PRIMARY KEY,
-    file_id VARCHAR(36) NOT NULL REFERENCES filestorage.files(file_id),
+    file_id VARCHAR(36) NOT NULL REFERENCES files(file_id),
     access_user_id VARCHAR(36),
     access_user_type VARCHAR(20) CHECK (access_user_type IN ('student', 'coach', 'grader', 'admin')),
     access_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,7 +48,7 @@ CREATE TABLE IF NOT EXISTS filestorage.file_access_log (
 );
 
 -- 创建文件统计表
-CREATE TABLE IF NOT EXISTS filestorage.file_statistics (
+CREATE TABLE IF NOT EXISTS file_statistics (
     stat_id SERIAL PRIMARY KEY,
     stat_date DATE DEFAULT CURRENT_DATE,
     total_files INTEGER DEFAULT 0,
@@ -63,15 +62,15 @@ CREATE TABLE IF NOT EXISTS filestorage.file_statistics (
 );
 
 -- 创建索引
-CREATE INDEX IF NOT EXISTS idx_files_upload_user ON filestorage.files(upload_user_id);
-CREATE INDEX IF NOT EXISTS idx_files_upload_time ON filestorage.files(upload_time);
-CREATE INDEX IF NOT EXISTS idx_files_file_type ON filestorage.files(file_type);
-CREATE INDEX IF NOT EXISTS idx_files_status ON filestorage.files(file_status);
-CREATE INDEX IF NOT EXISTS idx_files_exam_id ON filestorage.files(related_exam_id);
-CREATE INDEX IF NOT EXISTS idx_file_access_log_file_id ON filestorage.file_access_log(file_id);
-CREATE INDEX IF NOT EXISTS idx_file_access_log_user ON filestorage.file_access_log(access_user_id);
-CREATE INDEX IF NOT EXISTS idx_file_access_log_time ON filestorage.file_access_log(access_time);
-CREATE INDEX IF NOT EXISTS idx_file_statistics_date ON filestorage.file_statistics(stat_date);
+CREATE INDEX IF NOT EXISTS idx_files_upload_user ON files(upload_user_id);
+CREATE INDEX IF NOT EXISTS idx_files_upload_time ON files(upload_time);
+CREATE INDEX IF NOT EXISTS idx_files_file_type ON files(file_type);
+CREATE INDEX IF NOT EXISTS idx_files_status ON files(file_status);
+CREATE INDEX IF NOT EXISTS idx_files_exam_id ON files(related_exam_id);
+CREATE INDEX IF NOT EXISTS idx_file_access_log_file_id ON file_accesses(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_access_log_user ON file_accesses(access_user_id);
+CREATE INDEX IF NOT EXISTS idx_file_access_log_time ON file_accesses(access_time);
+CREATE INDEX IF NOT EXISTS idx_file_statistics_date ON file_statistics(stat_date);
 
 -- 创建更新时间触发器
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -83,19 +82,19 @@ END;
 $$ language 'plpgsql';
 
 CREATE TRIGGER update_files_updated_at 
-    BEFORE UPDATE ON filestorage.files 
+    BEFORE UPDATE ON files 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_file_statistics_updated_at 
-    BEFORE UPDATE ON filestorage.file_statistics 
+    BEFORE UPDATE ON file_statistics 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 插入初始统计数据
-INSERT INTO filestorage.file_statistics (stat_date) VALUES (CURRENT_DATE) 
+INSERT INTO file_statistics (stat_date) VALUES (CURRENT_DATE) 
 ON CONFLICT DO NOTHING;
 
 -- 创建视图
-CREATE OR REPLACE VIEW filestorage.v_file_dashboard AS
+CREATE OR REPLACE VIEW v_file_dashboard AS
 SELECT 
     COUNT(*) as total_files,
     SUM(file_size) as total_size,
@@ -104,7 +103,7 @@ SELECT
     COUNT(CASE WHEN upload_time >= CURRENT_DATE THEN 1 END) as today_uploads,
     COUNT(CASE WHEN upload_time >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week_uploads,
     COUNT(CASE WHEN upload_time >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month_uploads
-FROM filestorage.files;
+FROM files;
 
 -- 授权
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA filestorage TO db;

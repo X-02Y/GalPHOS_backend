@@ -47,7 +47,8 @@ case class ServiceConfig(
   maximumPoolSize: Int,
   connectionLiveMinutes: Int,
   isTest: Boolean,
-  fileStorageService: FileStorageServiceConfig
+  fileStorageService: FileStorageServiceConfig,
+  regionServiceUrl: Option[String] = Some("http://localhost:3007")
 ) {
   def toDatabaseConfig: DatabaseConfig = DatabaseConfig(
     jdbcUrl = jdbcUrl,
