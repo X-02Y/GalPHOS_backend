@@ -37,6 +37,9 @@ trait UserManagementService {
   // 阅卷员密码修改方法（使用不同的参数结构）
   def changeGraderPassword(username: String, request: ChangeGraderPasswordRequest): IO[Unit]
   
+  // 管理员密码修改方法
+  def changeAdminPassword(username: String, currentPassword: String, newPassword: String): IO[Unit]
+  
   // 文件上传相关方法
   def uploadAvatar(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String): IO[FileOperationResponse]
   def uploadAnswerImage(username: String, fileName: String, fileData: Array[Byte], mimeType: String, examId: Option[String] = None, questionNumber: Option[Int] = None): IO[FileOperationResponse]
@@ -604,6 +607,54 @@ class UserManagementServiceImpl() extends UserManagementService {
       } yield ()
     }
   }
+  
+  override def changeAdminPassword(username: String, currentPassword: String, newPassword: String): IO[Unit] = {
+    // 验证密码长度
+    if (newPassword.length < 6) {
+      IO.raiseError(new RuntimeException("新密码长度不能少于6位"))
+    } else {
+      // 这里直接更新数据库中的密码
+      // 注意：前端已经对密码进行了哈希处理，所以这里直接存储
+      val sql = s"""
+        UPDATE authservice.user_table 
+        SET password_hash = ?, updated_at = NOW()
+        WHERE username = ? AND role = 'admin'
+      """.stripMargin
+
+      val params = List(
+        SqlParameter("String", newPassword), // 前端传来的已经是哈希后的密码
+        SqlParameter("String", username)
+      )
+
+      for {
+        // 首先验证当前密码
+        currentUser <- DatabaseManager.executeQueryOptional(
+          "SELECT password_hash FROM authservice.user_table WHERE username = ? AND role = 'admin'",
+          List(SqlParameter("String", username))
+        )
+        _ <- currentUser match {
+          case Some(user) =>
+            val currentHash = DatabaseManager.decodeFieldUnsafe[String](user, "password_hash")
+            if (currentHash == currentPassword) {
+              // 当前密码正确，更新为新密码
+              for {
+                rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+                _ <- if (rowsAffected == 0) {
+                  IO.raiseError(new RuntimeException(s"管理员不存在或更新失败: $username"))
+                } else {
+                  IO.unit
+                }
+              } yield ()
+            } else {
+              IO.raiseError(new RuntimeException("当前密码不正确"))
+            }
+          case None =>
+            IO.raiseError(new RuntimeException(s"管理员不存在: $username"))
+        }
+        _ = logger.info(s"管理员密码修改成功: username=$username")
+      } yield ()
+    }
+  }
 
   private def convertToStudentRegistrationRequest(json: io.circe.Json): StudentRegistrationRequest = {
     StudentRegistrationRequest(
@@ -641,7 +692,8 @@ class UserManagementServiceImpl() extends UserManagementService {
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
       username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
       createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
-      lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString)
+      lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString),
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
     )
   }
 

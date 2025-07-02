@@ -291,12 +291,18 @@ case class AdminProfile(
   id: String,
   username: String,
   createdAt: Option[String],
-  lastLoginAt: Option[String]
+  lastLoginAt: Option[String],
+  avatarUrl: Option[String] = None
 )
 
 case class UpdateAdminProfileRequest(
   // 管理员可能只需要更新一些基本信息
   avatarUrl: Option[String] = None
+)
+
+case class ChangeAdminPasswordRequest(
+  currentPassword: String,
+  newPassword: String
 )
 
 // ===================== 新增的数据模型 =====================

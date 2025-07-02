@@ -53,8 +53,14 @@ class UserManagementController(
         handleGetApprovedUsers(req)
       }.map(_.withHeaders(corsHeaders))
 
-    // 更新用户状态
+    // 更新用户状态 - 支持 PUT 和 POST 请求
     case req @ PUT -> Root / "api" / "admin" / "users" / "status" =>
+      authenticateAdmin(req) { _ =>
+        handleUpdateUserStatus(req)
+      }.map(_.withHeaders(corsHeaders))
+      
+    // 更新用户状态 - 支持前端 POST 请求
+    case req @ POST -> Root / "api" / "admin" / "users" / "status" =>
       authenticateAdmin(req) { _ =>
         handleUpdateUserStatus(req)
       }.map(_.withHeaders(corsHeaders))
@@ -134,6 +140,12 @@ class UserManagementController(
     case req @ PUT -> Root / "api" / "admin" / "profile" =>
       authenticateAdmin(req) { authResult =>
         handleUpdateAdminProfile(req, authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+      
+    // 管理员密码修改 - 统一为 PUT 方法
+    case req @ PUT -> Root / "api" / "admin" / "password" =>
+      authenticateAdmin(req) { authResult =>
+        handleChangeAdminPassword(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
     // 学生个人资料
@@ -497,6 +509,17 @@ class UserManagementController(
   }.handleErrorWith { error =>
     logger.error("更新管理员资料失败", error)
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
+  }
+  
+  private def handleChangeAdminPassword(req: Request[IO], username: String): IO[Response[IO]] = {
+    for {
+      passwordReq <- req.as[ChangeAdminPasswordRequest]
+      _ <- userManagementService.changeAdminPassword(username, passwordReq.currentPassword, passwordReq.newPassword)
+      response <- Ok(ApiResponse.success((), "管理员密码修改成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("修改管理员密码失败", error)
+    BadRequest(ApiResponse.error(s"密码修改失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetStudentProfile(username: String): IO[Response[IO]] = {
