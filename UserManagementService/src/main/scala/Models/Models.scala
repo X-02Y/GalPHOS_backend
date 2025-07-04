@@ -292,17 +292,42 @@ case class AdminProfile(
   username: String,
   createdAt: Option[String],
   lastLoginAt: Option[String],
-  avatarUrl: Option[String] = None
+  avatarUrl: Option[String] = None,
+  status: Option[String] = None,
+  role: Option[String] = None
 )
 
 case class UpdateAdminProfileRequest(
-  // 管理员可能只需要更新一些基本信息
+  // 管理员可以更新用户名和头像
+  username: Option[String] = None,
   avatarUrl: Option[String] = None
 )
 
 case class ChangeAdminPasswordRequest(
   currentPassword: String,
   newPassword: String
+)
+
+case class ResetAdminPasswordRequest(
+  password: String  // 新密码（由超级管理员直接设置）
+)
+
+// 创建系统管理员请求
+case class CreateSystemAdminRequest(
+  username: String,
+  password: String,
+  role: String = "admin",  // "admin" 或 "super_admin"
+  name: Option[String] = None,
+  avatarUrl: Option[String] = None
+)
+
+// 更新系统管理员请求
+case class UpdateSystemAdminRequest(
+  username: Option[String] = None,
+  role: Option[String] = None,
+  status: Option[String] = None,
+  name: Option[String] = None,
+  avatarUrl: Option[String] = None
 )
 
 // ===================== 新增的数据模型 =====================

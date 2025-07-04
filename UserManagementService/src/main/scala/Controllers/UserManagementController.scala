@@ -236,6 +236,38 @@ class UserManagementController(
         handleChangeGraderPassword(req, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
+    // ===================== 系统管理员管理模块（SystemConfigService代理） =====================
+    
+    // 获取管理员列表
+    case req @ GET -> Root / "api" / "admin" / "system" / "admins" =>
+      authenticateAdmin(req) { _ =>
+        handleGetSystemAdmins()
+      }.map(_.withHeaders(corsHeaders))
+    
+    // 创建管理员
+    case req @ POST -> Root / "api" / "admin" / "system" / "admins" =>
+      authenticateAdmin(req) { _ =>
+        handleCreateSystemAdmin(req)
+      }.map(_.withHeaders(corsHeaders))
+    
+    // 更新管理员
+    case req @ PUT -> Root / "api" / "admin" / "system" / "admins" / adminId =>
+      authenticateAdmin(req) { _ =>
+        handleUpdateSystemAdmin(req, adminId)
+      }.map(_.withHeaders(corsHeaders))
+    
+    // 删除管理员
+    case req @ DELETE -> Root / "api" / "admin" / "system" / "admins" / adminId =>
+      authenticateAdmin(req) { _ =>
+        handleDeleteSystemAdmin(adminId)
+      }.map(_.withHeaders(corsHeaders))
+    
+    // 重置管理员密码
+    case req @ PUT -> Root / "api" / "admin" / "system" / "admins" / adminId / "password" =>
+      authenticateAdmin(req) { _ =>
+        handleResetSystemAdminPassword(req, adminId)
+      }.map(_.withHeaders(corsHeaders))
+
     // 健康检查
     case GET -> Root / "health" =>
       Ok("OK").map(_.withHeaders(corsHeaders))
@@ -688,5 +720,60 @@ class UserManagementController(
   }.handleErrorWith { error =>
     logger.error("修改阅卷员密码失败", error)
     BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
+  }
+
+  // ===================== 系统管理员管理处理方法 =====================
+
+  private def handleGetSystemAdmins(): IO[Response[IO]] = {
+    for {
+      admins <- userManagementService.getSystemAdmins()
+      response <- Ok(ApiResponse.success(admins, "获取管理员列表成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取管理员列表失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleCreateSystemAdmin(req: Request[IO]): IO[Response[IO]] = {
+    for {
+      createReq <- req.as[CreateSystemAdminRequest]
+      adminId <- userManagementService.createSystemAdmin(createReq)
+      response <- Ok(ApiResponse.success(Map("adminId" -> adminId), "创建管理员成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("创建管理员失败", error)
+    BadRequest(ApiResponse.error(s"创建失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleUpdateSystemAdmin(req: Request[IO], adminId: String): IO[Response[IO]] = {
+    for {
+      updateReq <- req.as[UpdateSystemAdminRequest]
+      _ <- userManagementService.updateSystemAdmin(adminId, updateReq)
+      response <- Ok(ApiResponse.success((), "更新管理员成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新管理员失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleDeleteSystemAdmin(adminId: String): IO[Response[IO]] = {
+    for {
+      _ <- userManagementService.deleteSystemAdmin(adminId)
+      response <- Ok(ApiResponse.success((), "删除管理员成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("删除管理员失败", error)
+    BadRequest(ApiResponse.error(s"删除失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleResetSystemAdminPassword(req: Request[IO], adminId: String): IO[Response[IO]] = {
+    for {
+      resetReq <- req.as[ResetAdminPasswordRequest]
+      _ <- userManagementService.resetSystemAdminPassword(adminId, resetReq.password)
+      response <- Ok(ApiResponse.success((), "重置管理员密码成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("重置管理员密码失败", error)
+    BadRequest(ApiResponse.error(s"重置失败: ${error.getMessage}").asJson)
   }
 }

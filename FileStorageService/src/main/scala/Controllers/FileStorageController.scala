@@ -657,9 +657,27 @@ class FileStorageController(fileStorageService: FileStorageService, config: Serv
         
         // 健康检查
         path("health") {
+          // OPTIONS预检请求处理
+          options {
+            complete(HttpResponse(
+              status = StatusCodes.OK,
+              headers = List(
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Origin`.*,
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Methods`(HttpMethods.GET, HttpMethods.OPTIONS),
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Headers`("Content-Type", "Authorization"),
+                akka.http.scaladsl.model.headers.`Access-Control-Max-Age`(86400)
+              ),
+              entity = HttpEntity.Empty
+            ))
+          } ~
           get {
             complete(HttpResponse(
               status = StatusCodes.OK,
+              headers = List(
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Origin`.*,
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Methods`(HttpMethods.GET, HttpMethods.OPTIONS),
+                akka.http.scaladsl.model.headers.`Access-Control-Allow-Headers`("Content-Type", "Authorization")
+              ),
               entity = HttpEntity(
                 ContentTypes.`application/json`,
                 JsObject(
@@ -673,6 +691,41 @@ class FileStorageController(fileStorageService: FileStorageService, config: Serv
           }
         }
       )
+    } ~ 
+    // 健康检查路径移到 api 前缀外
+    path("health") {
+      // OPTIONS预检请求处理
+      options {
+        complete(HttpResponse(
+          status = StatusCodes.OK,
+          headers = List(
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Origin`.*,
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Methods`(HttpMethods.GET, HttpMethods.OPTIONS),
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Headers`("Content-Type", "Authorization"),
+            akka.http.scaladsl.model.headers.`Access-Control-Max-Age`(86400)
+          ),
+          entity = HttpEntity.Empty
+        ))
+      } ~
+      get {
+        complete(HttpResponse(
+          status = StatusCodes.OK,
+          headers = List(
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Origin`.*,
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Methods`(HttpMethods.GET, HttpMethods.OPTIONS),
+            akka.http.scaladsl.model.headers.`Access-Control-Allow-Headers`("Content-Type", "Authorization")
+          ),
+          entity = HttpEntity(
+            ContentTypes.`application/json`,
+            JsObject(
+              "status" -> JsString("healthy"),
+              "service" -> JsString("FileStorageService"),
+              "timestamp" -> JsString(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)),
+              "version" -> JsString("1.0.0")
+            ).compactPrint
+          )
+        ))
+      }
     } ~ internalController.internalRoutes  // 添加内部通信路由
   }
   

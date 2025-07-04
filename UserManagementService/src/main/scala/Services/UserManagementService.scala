@@ -30,6 +30,13 @@ trait UserManagementService {
   def updateAdminProfile(username: String, request: UpdateAdminProfileRequest): IO[Unit]
   def changeUserPassword(username: String, request: ChangePasswordRequest): IO[Unit]
   
+  // 系统管理员管理相关方法
+  def getSystemAdmins(): IO[List[AdminProfile]]
+  def createSystemAdmin(request: CreateSystemAdminRequest): IO[String]
+  def updateSystemAdmin(adminId: String, request: UpdateSystemAdminRequest): IO[Unit]
+  def deleteSystemAdmin(adminId: String): IO[Unit]
+  def resetSystemAdminPassword(adminId: String, newPassword: String): IO[Unit]
+  
   // 区域变更相关方法
   def createRegionChangeRequest(username: String, request: RegionChangeRequest): IO[String]
   def getUserRegionChangeRequests(username: String): IO[List[RegionChangeRequestRecord]]
@@ -461,13 +468,38 @@ class UserManagementServiceImpl() extends UserManagementService {
     } yield exists
   }
 
+  // 辅助方法：检查管理员用户名是否已存在
+  private def checkAdminUsernameExists(username: String): IO[Boolean] = {
+    val sql = s"""
+      SELECT COUNT(*) as count
+      FROM authservice.admin_table
+      WHERE username = ?
+    """.stripMargin
+
+    val params = List(SqlParameter("String", username))
+
+    for {
+      results <- DatabaseManager.executeQuery(sql, params)
+      exists <- results.headOption match {
+        case Some(json: io.circe.Json) =>
+          val count = DatabaseManager.decodeFieldUnsafe[Int](json, "count")
+          IO.pure(count > 0)
+        case None =>
+          IO.pure(false)
+      }
+    } yield exists
+  }
+
   override def getAdminProfile(username: String): IO[Option[AdminProfile]] = {
     val sql = s"""
       SELECT 
         admin_id as id,
         username,
+        status,
+        role,
+        avatar_url,
         created_at as createdAt,
-        created_at as lastLoginAt
+        last_login_at as lastLoginAt
       FROM authservice.admin_table
       WHERE username = ?
     """.stripMargin
@@ -480,36 +512,53 @@ class UserManagementServiceImpl() extends UserManagementService {
   }
 
   override def updateAdminProfile(username: String, request: UpdateAdminProfileRequest): IO[Unit] = {
-    // 管理员资料更新比较简单，只允许更新头像等基本信息
+    // 管理员资料更新，支持用户名和头像更新
     val updateFields = scala.collection.mutable.ListBuffer[String]()
     val sqlParams = scala.collection.mutable.ListBuffer[SqlParameter]()
+
+    // 如果要更新用户名，先检查新用户名的唯一性
+    val usernameValidation = request.username match {
+      case Some(newUsername) if newUsername != username =>
+        checkAdminUsernameExists(newUsername).flatMap {
+          case true => IO.raiseError(new RuntimeException(s"用户名已存在: $newUsername"))
+          case false => 
+            updateFields += "username = ?"
+            sqlParams += SqlParameter("String", newUsername)
+            IO.unit
+        }
+      case Some(_) => IO.unit // 用户名未变更
+      case None => IO.unit // 不更新用户名
+    }
 
     request.avatarUrl.foreach { avatarUrl =>
       updateFields += "avatar_url = ?"
       sqlParams += SqlParameter("String", avatarUrl)
     }
 
-    if (updateFields.isEmpty) {
-      IO.unit // 没有需要更新的字段
-    } else {
-      sqlParams += SqlParameter("String", username)
+    for {
+      _ <- usernameValidation
+      _ <- if (updateFields.isEmpty) {
+        IO.unit // 没有需要更新的字段
+      } else {
+        sqlParams += SqlParameter("String", username)
 
-      val sql = s"""
-        UPDATE authservice.admin_table 
-        SET ${updateFields.mkString(", ")}
-        WHERE username = ?
-      """.stripMargin
+        val sql = s"""
+          UPDATE authservice.admin_table 
+          SET ${updateFields.mkString(", ")}
+          WHERE username = ?
+        """.stripMargin
 
-      for {
-        rowsAffected <- DatabaseManager.executeUpdate(sql, sqlParams.toList)
-        _ <- if (rowsAffected == 0) {
-          IO.raiseError(new RuntimeException(s"管理员不存在或更新失败: $username"))
-        } else {
-          IO.unit
-        }
-        _ = logger.info(s"管理员资料更新完成: username=$username")
-      } yield ()
-    }
+        for {
+          rowsAffected <- DatabaseManager.executeUpdate(sql, sqlParams.toList)
+          _ <- if (rowsAffected == 0) {
+            IO.raiseError(new RuntimeException(s"管理员不存在或更新失败: $username"))
+          } else {
+            IO.unit
+          }
+          _ = logger.info(s"管理员资料更新完成: username=$username")
+        } yield ()
+      }
+    } yield ()
   }
 
   override def changeUserPassword(username: String, request: ChangePasswordRequest): IO[Unit] = {
@@ -656,6 +705,208 @@ class UserManagementServiceImpl() extends UserManagementService {
     }
   }
 
+  // ===================== 系统管理员管理方法 =====================
+
+  override def getSystemAdmins(): IO[List[AdminProfile]] = {
+    val sql = s"""
+      SELECT 
+        admin_id as id,
+        username,
+        status,
+        role,
+        name,
+        avatar_url,
+        created_at as createdAt,
+        last_login_at as lastLoginAt
+      FROM authservice.admin_table
+      ORDER BY created_at DESC
+    """.stripMargin
+
+    for {
+      results <- DatabaseManager.executeQuery(sql, List.empty)
+    } yield results.map(convertToAdminProfile)
+  }
+
+  override def createSystemAdmin(request: CreateSystemAdminRequest): IO[String] = {
+    val adminId = java.util.UUID.randomUUID().toString
+    val salt = "GalPHOS_2025_SALT" // 使用统一的盐值
+    
+    // 验证用户名唯一性
+    for {
+      exists <- checkAdminUsernameExists(request.username)
+      _ <- if (exists) {
+        IO.raiseError(new RuntimeException(s"管理员用户名已存在: ${request.username}"))
+      } else {
+        IO.unit
+      }
+      
+      // 插入新管理员
+      sql = """
+        INSERT INTO authservice.admin_table (
+          admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NOW())
+      """.stripMargin
+      
+      params = List(
+        SqlParameter("String", adminId),
+        SqlParameter("String", request.username),
+        SqlParameter("String", request.password), // 前端已经哈希过的密码
+        SqlParameter("String", salt),
+        SqlParameter("String", request.role),
+        SqlParameter("String", request.name.getOrElse("")),
+        SqlParameter("String", request.avatarUrl.getOrElse(""))
+      )
+      
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException("创建管理员失败"))
+      } else {
+        IO.unit
+      }
+      _ = logger.info(s"创建管理员成功: adminId=$adminId, username=${request.username}")
+    } yield adminId
+  }
+
+  override def updateSystemAdmin(adminId: String, request: UpdateSystemAdminRequest): IO[Unit] = {
+    val updateFields = scala.collection.mutable.ListBuffer[String]()
+    val sqlParams = scala.collection.mutable.ListBuffer[SqlParameter]()
+
+    // 检查用户名唯一性
+    val usernameValidation = request.username match {
+      case Some(newUsername) =>
+        checkAdminUsernameExists(newUsername).flatMap {
+          case true => 
+            // 检查是否是当前用户自己的用户名
+            DatabaseManager.executeQueryOptional(
+              "SELECT username FROM authservice.admin_table WHERE admin_id = ?",
+              List(SqlParameter("String", adminId))
+            ).flatMap {
+              case Some(currentRecord) =>
+                val currentUsername = DatabaseManager.decodeFieldUnsafe[String](currentRecord, "username")
+                if (currentUsername == newUsername) {
+                  IO.unit // 是自己的用户名，允许
+                } else {
+                  IO.raiseError(new RuntimeException(s"用户名已存在: $newUsername"))
+                }
+              case None =>
+                IO.raiseError(new RuntimeException("管理员不存在"))
+            }
+          case false =>
+            updateFields += "username = ?"
+            sqlParams += SqlParameter("String", newUsername)
+            IO.unit
+        }
+      case None => IO.unit
+    }
+
+    // 构建更新字段
+    request.role.foreach { role =>
+      updateFields += "role = ?"
+      sqlParams += SqlParameter("String", role)
+    }
+    
+    request.status.foreach { status =>
+      updateFields += "status = ?"
+      sqlParams += SqlParameter("String", status)
+    }
+    
+    request.name.foreach { name =>
+      updateFields += "name = ?"
+      sqlParams += SqlParameter("String", name)
+    }
+    
+    request.avatarUrl.foreach { avatarUrl =>
+      updateFields += "avatar_url = ?"
+      sqlParams += SqlParameter("String", avatarUrl)
+    }
+
+    for {
+      _ <- usernameValidation
+      _ <- if (updateFields.isEmpty) {
+        IO.unit
+      } else {
+        sqlParams += SqlParameter("String", adminId)
+        
+        val sql = s"""
+          UPDATE authservice.admin_table 
+          SET ${updateFields.mkString(", ")}
+          WHERE admin_id = ?
+        """.stripMargin
+
+        for {
+          rowsAffected <- DatabaseManager.executeUpdate(sql, sqlParams.toList)
+          _ <- if (rowsAffected == 0) {
+            IO.raiseError(new RuntimeException("管理员不存在或更新失败"))
+          } else {
+            IO.unit
+          }
+          _ = logger.info(s"更新管理员成功: adminId=$adminId")
+        } yield ()
+      }
+    } yield ()
+  }
+
+  override def deleteSystemAdmin(adminId: String): IO[Unit] = {
+    for {
+      // 检查是否是超级管理员
+      admin <- DatabaseManager.executeQueryOptional(
+        "SELECT role FROM authservice.admin_table WHERE admin_id = ?",
+        List(SqlParameter("String", adminId))
+      )
+      _ <- admin match {
+        case Some(adminRecord) =>
+          val role = DatabaseManager.decodeFieldUnsafe[String](adminRecord, "role")
+          if (role == "super_admin") {
+            IO.raiseError(new RuntimeException("不能删除超级管理员"))
+          } else {
+            IO.unit
+          }
+        case None =>
+          IO.raiseError(new RuntimeException("管理员不存在"))
+      }
+      
+      // 删除管理员
+      sql = "DELETE FROM authservice.admin_table WHERE admin_id = ?"
+      params = List(SqlParameter("String", adminId))
+      
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException("管理员不存在或删除失败"))
+      } else {
+        IO.unit
+      }
+      _ = logger.info(s"删除管理员成功: adminId=$adminId")
+    } yield ()
+  }
+
+  override def resetSystemAdminPassword(adminId: String, newPassword: String): IO[Unit] = {
+    if (newPassword.length < 6) {
+      IO.raiseError(new RuntimeException("新密码长度不能少于6位"))
+    } else {
+      val sql = """
+        UPDATE authservice.admin_table 
+        SET password_hash = ?
+        WHERE admin_id = ?
+      """.stripMargin
+
+      val params = List(
+        SqlParameter("String", newPassword), // 前端传来的已经是哈希后的密码
+        SqlParameter("String", adminId)
+      )
+
+      for {
+        rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+        _ <- if (rowsAffected == 0) {
+          IO.raiseError(new RuntimeException("管理员不存在或密码重置失败"))
+        } else {
+          IO.unit
+        }
+        _ = logger.info(s"重置管理员密码成功: adminId=$adminId")
+      } yield ()
+    }
+  }
+
+  // ===================== 辅助方法 =====================
   private def convertToStudentRegistrationRequest(json: io.circe.Json): StudentRegistrationRequest = {
     StudentRegistrationRequest(
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
@@ -693,7 +944,9 @@ class UserManagementServiceImpl() extends UserManagementService {
       username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
       createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
       lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString),
-      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatar_url"),
+      status = DatabaseManager.decodeFieldOptional[String](json, "status"),
+      role = DatabaseManager.decodeFieldOptional[String](json, "role")
     )
   }
 

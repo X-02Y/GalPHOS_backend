@@ -52,10 +52,12 @@ class AuthService(
       adminOpt <- adminService.findAdminByUsername(loginReq.username)
       result <- adminOpt match {
         case Some(admin) =>
-          // 前端已经发送哈希后的密码，直接比较
-          if (loginReq.password == admin.passwordHash) {
+          // 检查管理员状态
+          if (admin.status != "active") {
+            IO.pure(Left("管理员账户已被禁用"))
+          } else if (loginReq.password == admin.passwordHash) {
             for {
-              _ <- IO(logger.info(s"管理员登录验证成功，开始生成token: adminID=${admin.adminID}"))
+              _ <- IO(logger.info(s"管理员登录验证成功，开始生成token: adminID=${admin.adminID}, status=${admin.status}"))
               token <- tokenService.generateToken(UUID.fromString(admin.adminID), isAdmin = true)
               _ <- IO(logger.info(s"Token生成成功: ${token.take(20)}..."))
               userInfo = UserInfo(
@@ -118,7 +120,18 @@ class AuthService(
               adminOpt <- adminService.findAdminById(userId.toString)
               userInfo <- adminOpt match {
                 case Some(admin) =>
-                  IO.pure(Right(UserInfo(username = admin.username, `type` = Some("admin"))))
+                  if (admin.status == "active") {
+                    IO.pure(Right(UserInfo(
+                      username = admin.username, 
+                      `type` = Some("admin"),
+                      role = Some(admin.role), // 包含管理员角色信息
+                      province = None,
+                      school = None,
+                      avatar = admin.avatarUrl
+                    )))
+                  } else {
+                    IO.pure(Left("管理员账户已被禁用"))
+                  }
                 case None =>
                   IO.pure(Left("管理员不存在"))
               }

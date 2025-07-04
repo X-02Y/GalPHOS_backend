@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  system-config-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3009:3009"
+    environment:
+      - POSTGRES_HOST=postgres
+    depends_on:
+      - postgres
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - galphos-network
+
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: galphos_systemconfig
+    ports:
+      - "5439:5432"
+    volumes:
+      - ./init_database.sql:/docker-entrypoint-initdb.d/init_database.sql
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - galphos-network
+
+networks:
+  galphos-network:
+    external: true
+
+volumes:
+  postgres-data:

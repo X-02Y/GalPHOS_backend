@@ -54,7 +54,7 @@ object FileStorageApp extends App {
       case Success(binding) =>
         println(s"FileStorageService 成功启动！")
         println(s"服务地址: http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}")
-        println(s"健康检查: http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/api/health")
+        println(s"健康检查: http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/health")
         println("\n外部API端点 (前端调用):")
         println("  GET  /api/student/files/download/{fileId}     - 学生文件下载")
         println("  GET  /api/grader/images?url={imageUrl}        - 阅卷员图片代理")
@@ -63,7 +63,7 @@ object FileStorageApp extends App {
         println("  GET  /api/coach/exams/{examId}/scores/statistics - 教练成绩统计")
         println("  GET  /api/coach/dashboard/stats               - 教练仪表盘统计")
         println("  GET  /api/admin/dashboard/stats               - 管理员仪表盘统计")
-        println("  GET  /api/health                              - 健康检查")
+        println("  GET  /health                              - 健康检查")
         println("\n内部API端点 (微服务调用):")
         println("  POST /internal/upload                         - 文件上传")
         println("  POST /internal/download                       - 文件下载")

@@ -24,6 +24,10 @@ class TokenServiceImpl(config: ServerConfig) extends TokenService {
   private val schemaName = "authservice"
   private val jwtSecret = Constants.JWT_SECRET
   private val expirationHours = Constants.JWT_EXPIRATION_HOURS
+  
+  // 添加简单的内存缓存来避免重复验证同一个 Token
+  private val validationCache = scala.collection.mutable.Map[String, (Either[String, (UUID, Boolean)], Long)]()
+  private val cacheExpirationSeconds = 60 // 缓存1分钟
 
   override def generateToken(userId: UUID, isAdmin: Boolean = false): IO[String] = IO {
     val now = Instant.now(Clock.systemUTC)
@@ -46,6 +50,45 @@ class TokenServiceImpl(config: ServerConfig) extends TokenService {
   }
 
   override def validateToken(token: String): IO[Either[String, (UUID, Boolean)]] = {
+    for {
+      _ <- IO(logger.info(s"开始验证Token: ${token.take(20)}..."))
+      
+      // 检查缓存
+      cachedResult <- IO {
+        val now = System.currentTimeMillis() / 1000
+        validationCache.get(token) match {
+          case Some((result, timestamp)) if (now - timestamp) < cacheExpirationSeconds =>
+            logger.info(s"从缓存返回Token验证结果: ${token.take(20)}...")
+            Some(result)
+          case Some(_) =>
+            // 缓存过期，移除
+            validationCache.remove(token)
+            None
+          case None => None
+        }
+      }
+      
+      result <- cachedResult match {
+        case Some(cached) => IO.pure(cached)
+        case None =>
+          // 执行实际验证
+          performTokenValidation(token).flatTap { result =>
+            IO {
+              // 缓存结果
+              val now = System.currentTimeMillis() / 1000
+              validationCache.put(token, (result, now))
+              // 清理过期缓存项
+              val expiredKeys = validationCache.filter { case (_, (_, timestamp)) => 
+                (now - timestamp) >= cacheExpirationSeconds 
+              }.keys
+              expiredKeys.foreach(validationCache.remove)
+            }
+          }
+      }
+    } yield result
+  }
+  
+  private def performTokenValidation(token: String): IO[Either[String, (UUID, Boolean)]] = {
     for {
       _ <- IO(logger.info(s"开始验证Token: ${token.take(20)}..."))
       isBlacklisted <- isTokenBlacklisted(token)

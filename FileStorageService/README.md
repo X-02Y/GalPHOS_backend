@@ -58,7 +58,7 @@ GET /api/admin/dashboard/stats                        # 管理员仪表盘统计
 ```
 POST   /api/files/upload                              # 文件上传
 DELETE /api/files/{fileId}                            # 文件删除
-GET    /api/health                                    # 健康检查
+GET    /health                                        # 健康检查
 ```
 
 ## 数据库设计
@@ -145,7 +145,7 @@ sbt run
 
 ### 5. 验证服务
 ```bash
-curl http://localhost:3008/api/health
+curl http://localhost:3008/health
 ```
 
 ## 文件存储结构
@@ -179,7 +179,7 @@ storage/files/
 
 ### 健康检查
 ```bash
-GET /api/health
+GET /health
 ```
 
 ### 统计数据查看
