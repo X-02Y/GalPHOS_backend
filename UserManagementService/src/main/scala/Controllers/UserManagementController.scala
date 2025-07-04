@@ -13,6 +13,7 @@ import org.http4s.Credentials
 import org.slf4j.LoggerFactory
 import Models.*
 import Services.*
+import Database.{DatabaseManager, SqlParameter}
 
 class UserManagementController(
   userManagementService: UserManagementService,
@@ -268,9 +269,19 @@ class UserManagementController(
         handleResetSystemAdminPassword(req, adminId)
       }.map(_.withHeaders(corsHeaders))
 
+    // 测试数据库连接和管理员表
+    case req @ GET -> Root / "api" / "admin" / "system" / "test" =>
+      authenticateAdmin(req) { _ =>
+        handleTestDatabase()
+      }.map(_.withHeaders(corsHeaders))
+
     // 健康检查
     case GET -> Root / "health" =>
       Ok("OK").map(_.withHeaders(corsHeaders))
+
+    // 健康检查API（不需要认证）
+    case req @ GET -> Root / "api" / "health" =>
+      handleHealthCheck().map(_.withHeaders(corsHeaders))
   }
 
   // 管理员身份验证中间件
@@ -737,12 +748,23 @@ class UserManagementController(
   private def handleCreateSystemAdmin(req: Request[IO]): IO[Response[IO]] = {
     for {
       createReq <- req.as[CreateSystemAdminRequest]
+      _ = logger.info(s"接收到创建管理员请求: username=${createReq.username}, role=${createReq.role}")
+      _ = logger.info(s"请求详情: password长度=${createReq.password.length}, name=${createReq.name}")
       adminId <- userManagementService.createSystemAdmin(createReq)
       response <- Ok(ApiResponse.success(Map("adminId" -> adminId), "创建管理员成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("创建管理员失败", error)
-    BadRequest(ApiResponse.error(s"创建失败: ${error.getMessage}").asJson)
+    error match {
+      case e: RuntimeException if e.getMessage.contains("已存在") =>
+        BadRequest(ApiResponse.error(s"用户名已存在: ${e.getMessage}").asJson)
+      case e: RuntimeException if e.getMessage.contains("数据库") =>
+        InternalServerError(ApiResponse.error(s"数据库错误: ${e.getMessage}").asJson)
+      case e: RuntimeException if e.getMessage.contains("影响行数为0") =>
+        InternalServerError(ApiResponse.error("创建管理员失败: 数据库插入失败").asJson)
+      case _ =>
+        InternalServerError(ApiResponse.error(s"创建管理员失败: ${error.getMessage}").asJson)
+    }
   }
 
   private def handleUpdateSystemAdmin(req: Request[IO], adminId: String): IO[Response[IO]] = {
@@ -775,5 +797,128 @@ class UserManagementController(
   }.handleErrorWith { error =>
     logger.error("重置管理员密码失败", error)
     BadRequest(ApiResponse.error(s"重置失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleTestDatabase(): IO[Response[IO]] = {
+    for {
+      // 测试数据库连接
+      _ <- DatabaseManager.executeQuery("SELECT 1 as test", List.empty).handleErrorWith { error =>
+        logger.error("数据库连接测试失败", error)
+        IO.raiseError(new RuntimeException(s"数据库连接失败: ${error.getMessage}"))
+      }
+      
+      // 测试admin_table表是否存在
+      _ <- DatabaseManager.executeQuery(
+        "SELECT COUNT(*) as count FROM authservice.admin_table WHERE 1=0", 
+        List.empty
+      ).handleErrorWith { error =>
+        logger.error("admin_table表测试失败", error)
+        IO.raiseError(new RuntimeException(s"admin_table表不存在或无法访问: ${error.getMessage}"))
+      }
+      
+      // 获取admin_table表的结构信息
+      tableInfo <- DatabaseManager.executeQuery(
+        """
+        SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns 
+        WHERE table_schema = 'authservice' AND table_name = 'admin_table'
+        ORDER BY ordinal_position
+        """, 
+        List.empty
+      ).handleErrorWith { error =>
+        logger.error("获取表结构失败", error)
+        IO.pure(List.empty)
+      }
+      
+      // 构建响应数据
+      columnData: List[String] = tableInfo.map(json => {
+        val columnName = DatabaseManager.decodeFieldOptional[String](json, "column_name").getOrElse("unknown")
+        val dataType = DatabaseManager.decodeFieldOptional[String](json, "data_type").getOrElse("unknown")
+        val isNullable = DatabaseManager.decodeFieldOptional[String](json, "is_nullable").getOrElse("unknown")
+        s"$columnName ($dataType, nullable: $isNullable)"
+      })
+      
+      // 手动构建JSON响应
+      responseJson = io.circe.Json.obj(
+        "database_connection" -> io.circe.Json.fromString("OK"),
+        "admin_table_access" -> io.circe.Json.fromString("OK"),
+        "table_columns" -> io.circe.Json.fromValues(columnData.map(io.circe.Json.fromString))
+      )
+      
+      response <- Ok(ApiResponse.success(
+        responseJson,
+        "数据库连接和表测试成功"
+      ).asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("数据库测试失败", error)
+    InternalServerError(ApiResponse.error(s"数据库测试失败: ${error.getMessage}").asJson)
+  }
+
+  // 健康检查处理方法
+  private def handleHealthCheck(): IO[Response[IO]] = {
+    for {
+      // 测试数据库连接
+      dbStatus <- DatabaseManager.executeQuery("SELECT 1 as test", List.empty).map(_ => "OK").handleErrorWith { error =>
+        logger.error("数据库连接测试失败", error)
+        IO.pure(s"ERROR: ${error.getMessage}")
+      }
+      
+      // 测试admin_table表是否存在
+      tableStatus <- DatabaseManager.executeQuery(
+        "SELECT COUNT(*) as count FROM authservice.admin_table WHERE 1=0", 
+        List.empty
+      ).map(_ => "OK").handleErrorWith { error =>
+        logger.error("admin_table表测试失败", error)
+        IO.pure(s"ERROR: ${error.getMessage}")
+      }
+      
+      // 构建响应数据
+      responseData = Map(
+        "service" -> "UserManagementService",
+        "status" -> "running",
+        "database_connection" -> dbStatus,
+        "admin_table_access" -> tableStatus,
+        "timestamp" -> java.time.LocalDateTime.now().toString
+      )
+      
+      response <- Ok(ApiResponse.success(
+        responseData,
+        "健康检查完成"
+      ).asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("健康检查失败", error)
+    InternalServerError(ApiResponse.error(s"健康检查失败: ${error.getMessage}").asJson)
+  }
+
+  // 获取管理员头像 API
+  private def handleGetAdminAvatar(username: String, format: String): IO[Response[IO]] = {
+    for {
+      // 根据用户名获取用户信息
+      userOpt <- userManagementService.getAdminProfile(username)
+      response <- userOpt match {
+        case Some(user) =>
+          // 根据请求的格式返回头像
+          format.toLowerCase match {
+            case "base64" =>
+              // 返回Base64编码的头像
+              user.avatarUrl match {
+                case Some(url) =>
+                  // 读取头像文件并转换为Base64
+                  val base64Data = java.util.Base64.getEncoder.encodeToString(scala.io.Source.fromURL(url).map(_.toByte).toArray)
+                  Ok(ApiResponse.success(Map("avatar" -> s"data:image/png;base64,$base64Data"), "获取管理员头像成功").asJson)
+                case None => BadRequest(ApiResponse.error("头像不存在").asJson)
+              }
+            case "url" | _ =>
+              // 默认返回URL
+              Ok(ApiResponse.success(Map("avatar" -> user.avatarUrl.getOrElse("")), "获取管理员头像成功").asJson)
+          }
+        case None => NotFound(ApiResponse.error("管理员不存在").asJson)
+      }
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("获取管理员头像失败", error)
+    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 }

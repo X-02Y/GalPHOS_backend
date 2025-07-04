@@ -254,6 +254,34 @@ class FileStorageClient(config: ServiceConfig) {
   }
 
   /**
+   * 下载文件并转换为Base64字符串
+   */
+  def downloadFileAsBase64(fileId: String, userId: String, userType: String): IO[String] = {
+    for {
+      client <- httpClient
+      base64Data <- performDownloadAsBase64(client, fileId, userId, userType)
+    } yield base64Data
+  }
+
+  private def performDownloadAsBase64(client: Client[IO], fileId: String, userId: String, userType: String): IO[String] = {
+    val request = Request[IO](
+      method = Method.GET,
+      uri = Uri.unsafeFromString(s"$baseUrl/api/$userType/files/download/$fileId"),
+      headers = Headers(
+        "X-Internal-API-Key" -> internalApiKey,
+        "User-Agent" -> "UserManagementService/1.0.0"
+      )
+    )
+
+    client.expect[Array[Byte]](request).map { bytes =>
+      Base64.getEncoder.encodeToString(bytes)
+    }.handleErrorWith { error =>
+      logger.error(s"下载文件失败: ${error.getMessage}", error)
+      IO.raiseError(error)
+    }
+  }
+
+  /**
    * 健康检查
    */
   def healthCheck(): IO[Boolean] = {

@@ -293,6 +293,7 @@ case class AdminProfile(
   createdAt: Option[String],
   lastLoginAt: Option[String],
   avatarUrl: Option[String] = None,
+  avatar: Option[String] = None, // 新增：支持base64头像数据
   status: Option[String] = None,
   role: Option[String] = None
 )
@@ -300,7 +301,8 @@ case class AdminProfile(
 case class UpdateAdminProfileRequest(
   // 管理员可以更新用户名和头像
   username: Option[String] = None,
-  avatarUrl: Option[String] = None
+  avatarUrl: Option[String] = None,
+  avatar: Option[String] = None // 新增：支持直接传递base64头像数据
 )
 
 case class ChangeAdminPasswordRequest(

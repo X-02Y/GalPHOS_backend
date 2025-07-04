@@ -51,6 +51,9 @@ trait UserManagementService {
   def uploadAvatar(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String): IO[FileOperationResponse]
   def uploadAnswerImage(username: String, fileName: String, fileData: Array[Byte], mimeType: String, examId: Option[String] = None, questionNumber: Option[Int] = None): IO[FileOperationResponse]
   def uploadDocument(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String, description: Option[String] = None): IO[FileOperationResponse]
+  
+  // 获取用户头像（支持返回base64或URL）
+  def getUserAvatar(username: String, format: String = "url"): IO[Option[String]]
 }
 
 class UserManagementServiceImpl() extends UserManagementService {
@@ -477,17 +480,32 @@ class UserManagementServiceImpl() extends UserManagementService {
     """.stripMargin
 
     val params = List(SqlParameter("String", username))
+    
+    logger.info(s"检查管理员用户名是否存在: $username")
 
     for {
-      results <- DatabaseManager.executeQuery(sql, params)
+      results <- DatabaseManager.executeQuery(sql, params).handleErrorWith { error =>
+        logger.error(s"检查用户名查询失败: ${error.getMessage}", error)
+        if (error.getMessage.contains("relation") && error.getMessage.contains("does not exist")) {
+          IO.raiseError(new RuntimeException("数据库表 authservice.admin_table 不存在"))
+        } else {
+          IO.raiseError(new RuntimeException(s"数据库查询失败: ${error.getMessage}"))
+        }
+      }
+      
       exists <- results.headOption match {
         case Some(json: io.circe.Json) =>
           val count = DatabaseManager.decodeFieldUnsafe[Int](json, "count")
+          logger.info(s"用户名 $username 的查询结果: count=$count")
           IO.pure(count > 0)
         case None =>
+          logger.warn(s"用户名检查查询无结果: $username")
           IO.pure(false)
       }
     } yield exists
+  }.handleErrorWith { error =>
+    logger.error(s"检查用户名存在性失败: ${error.getMessage}", error)
+    IO.raiseError(error)
   }
 
   override def getAdminProfile(username: String): IO[Option[AdminProfile]] = {
@@ -530,9 +548,28 @@ class UserManagementServiceImpl() extends UserManagementService {
       case None => IO.unit // 不更新用户名
     }
 
-    request.avatarUrl.foreach { avatarUrl =>
-      updateFields += "avatar_url = ?"
-      sqlParams += SqlParameter("String", avatarUrl)
+    // 处理头像更新 - 支持base64和URL两种格式
+    // 优先使用 avatar 字段（base64），然后是 avatarUrl 字段
+    val avatarToUpdate = request.avatar.orElse(request.avatarUrl)
+    
+    avatarToUpdate.foreach { avatarUrl =>
+      if (avatarUrl.startsWith("data:image/")) {
+        // 如果是base64格式，直接存储
+        updateFields += "avatar_url = ?"
+        sqlParams += SqlParameter("String", avatarUrl)
+        logger.info(s"管理员 $username 头像更新为base64格式")
+      } else if (avatarUrl.startsWith("http://") || avatarUrl.startsWith("https://")) {
+        // 如果是完整URL，直接存储
+        updateFields += "avatar_url = ?"
+        sqlParams += SqlParameter("String", avatarUrl)
+        logger.info(s"管理员 $username 头像更新为URL格式: $avatarUrl")
+      } else {
+        // 如果是不完整的URL，添加协议
+        val completeUrl = s"http://$avatarUrl"
+        updateFields += "avatar_url = ?"
+        sqlParams += SqlParameter("String", completeUrl)
+        logger.info(s"管理员 $username 头像URL已补全协议: $completeUrl")
+      }
     }
 
     for {
@@ -731,20 +768,44 @@ class UserManagementServiceImpl() extends UserManagementService {
     val adminId = java.util.UUID.randomUUID().toString
     val salt = "GalPHOS_2025_SALT" // 使用统一的盐值
     
-    // 验证用户名唯一性
+    logger.info(s"开始创建管理员: username=${request.username}, role=${request.role}")
+    logger.info(s"请求详情: password长度=${request.password.length}, name=${request.name}, avatarUrl=${request.avatarUrl}")
+    
+    // 验证输入参数
     for {
-      exists <- checkAdminUsernameExists(request.username)
+      _ <- if (request.username.trim.isEmpty) {
+        logger.error("用户名不能为空")
+        IO.raiseError(new RuntimeException("用户名不能为空"))
+      } else if (request.password.trim.isEmpty) {
+        logger.error("密码不能为空")
+        IO.raiseError(new RuntimeException("密码不能为空"))
+      } else if (!Set("admin", "super_admin").contains(request.role)) {
+        logger.error(s"无效的角色: ${request.role}")
+        IO.raiseError(new RuntimeException(s"无效的角色: ${request.role}，只支持admin或super_admin"))
+      } else {
+        logger.info("输入参数验证通过")
+        IO.unit
+      }
+      
+      // 验证用户名唯一性
+      exists <- checkAdminUsernameExists(request.username).handleErrorWith { error =>
+        logger.error(s"检查用户名唯一性失败: ${error.getMessage}", error)
+        IO.raiseError(new RuntimeException(s"检查用户名唯一性失败: ${error.getMessage}"))
+      }
+      
       _ <- if (exists) {
+        logger.warn(s"管理员用户名已存在: ${request.username}")
         IO.raiseError(new RuntimeException(s"管理员用户名已存在: ${request.username}"))
       } else {
+        logger.info(s"用户名检查通过: ${request.username}")
         IO.unit
       }
       
       // 插入新管理员
       sql = """
         INSERT INTO authservice.admin_table (
-          admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NOW())
+          admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       """.stripMargin
       
       params = List(
@@ -757,14 +818,41 @@ class UserManagementServiceImpl() extends UserManagementService {
         SqlParameter("String", request.avatarUrl.getOrElse(""))
       )
       
-      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ = logger.info(s"执行插入SQL: $sql")
+      _ = logger.info(s"参数: adminId=$adminId, username=${request.username}, role=${request.role}, name=${request.name}")
+      
+      // 先测试数据库连接
+      _ <- DatabaseManager.executeQuery("SELECT 1 as test", List.empty).handleErrorWith { error =>
+        logger.error(s"数据库连接测试失败: ${error.getMessage}", error)
+        IO.raiseError(new RuntimeException(s"数据库连接失败: ${error.getMessage}"))
+      }
+      
+      _ = logger.info("数据库连接测试成功")
+      
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params).handleErrorWith { error =>
+        logger.error(s"数据库插入失败: ${error.getMessage}", error)
+        // 检查是否是表不存在的错误
+        if (error.getMessage.contains("relation") && error.getMessage.contains("does not exist")) {
+          IO.raiseError(new RuntimeException(s"数据库表不存在: authservice.admin_table"))
+        } else if (error.getMessage.contains("duplicate key")) {
+          IO.raiseError(new RuntimeException(s"用户名已存在: ${request.username}"))
+        } else {
+          IO.raiseError(new RuntimeException(s"数据库插入失败: ${error.getMessage}"))
+        }
+      }
+      
       _ <- if (rowsAffected == 0) {
-        IO.raiseError(new RuntimeException("创建管理员失败"))
+        logger.error("插入管理员失败: 影响行数为0")
+        IO.raiseError(new RuntimeException("创建管理员失败: 数据库插入影响行数为0"))
       } else {
+        logger.info(s"管理员插入成功: 影响行数=$rowsAffected")
         IO.unit
       }
       _ = logger.info(s"创建管理员成功: adminId=$adminId, username=${request.username}")
     } yield adminId
+  }.handleErrorWith { error =>
+    logger.error(s"创建管理员失败: ${error.getMessage}", error)
+    IO.raiseError(error)
   }
 
   override def updateSystemAdmin(adminId: String, request: UpdateSystemAdminRequest): IO[Unit] = {
@@ -939,12 +1027,27 @@ class UserManagementServiceImpl() extends UserManagementService {
   }
 
   private def convertToAdminProfile(json: io.circe.Json): AdminProfile = {
+    val avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatar_url")
+    
+    // 根据数据库中存储的格式，决定返回avatar(base64)还是avatarUrl(URL)
+    val (finalAvatarUrl, finalAvatar) = avatarUrl match {
+      case Some(url) if url.startsWith("data:image/") =>
+        // 如果是base64格式，返回到avatar字段
+        (None, Some(url))
+      case Some(url) =>
+        // 如果是URL格式，返回到avatarUrl字段
+        (Some(url), None)
+      case None =>
+        (None, None)
+    }
+    
     AdminProfile(
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
       username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
       createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
       lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString),
-      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatar_url"),
+      avatarUrl = finalAvatarUrl,
+      avatar = finalAvatar,
       status = DatabaseManager.decodeFieldOptional[String](json, "status"),
       role = DatabaseManager.decodeFieldOptional[String](json, "role")
     )
@@ -1143,7 +1246,17 @@ class UserManagementServiceImpl() extends UserManagementService {
       
       result <- if (uploadResult.success) {
         val fileId = uploadResult.fileId.getOrElse("")
-        val fileUrl = s"${config.fileStorageService.host}:${config.fileStorageService.port}/files/${fileId}"
+        // 修正：使用正确的文件访问URL格式，添加协议
+        val baseUrl = s"http://${config.fileStorageService.host}:${config.fileStorageService.port}"
+        val fileUrl = userType match {
+          case "admin" => s"$baseUrl/api/admin/files/download/$fileId"
+          case "student" => s"$baseUrl/api/student/files/download/$fileId"
+          case "coach" => s"$baseUrl/api/coach/files/download/$fileId"
+          case "grader" => s"$baseUrl/api/grader/files/download/$fileId"
+          case _ => s"$baseUrl/api/student/files/download/$fileId" // 默认为student
+        }
+        
+        logger.info(s"生成头像URL: $fileUrl (用户类型: $userType, 文件ID: $fileId)")
         
         // 更新用户头像URL
         updateUserAvatarUrl(username, fileUrl).map { _ =>
@@ -1231,6 +1344,28 @@ class UserManagementServiceImpl() extends UserManagementService {
           )
         }
       )
+    } yield result
+  }
+
+  // 获取用户头像（支持返回base64或URL）
+  override def getUserAvatar(username: String, format: String = "url"): IO[Option[String]] = {
+    for {
+      // 获取用户资料获取avatarUrl
+      profileOpt <- getUserProfile(username)
+      result <- profileOpt match {
+        case Some(profile) if profile.avatarUrl.isDefined =>
+          val avatarUrl = profile.avatarUrl.get
+          if (format == "base64" && avatarUrl.contains("files/download/")) {
+            // 从FileStorageService获取文件并转换为base64
+            val fileId = avatarUrl.split("/").last
+            fileStorageClient.downloadFileAsBase64(fileId, username, "student")
+              .map(base64 => Some(s"data:image/jpeg;base64,$base64"))
+              .handleErrorWith(_ => IO.pure(Some(avatarUrl))) // 降级为URL
+          } else {
+            IO.pure(Some(avatarUrl))
+          }
+        case _ => IO.pure(None)
+      }
     } yield result
   }
 
