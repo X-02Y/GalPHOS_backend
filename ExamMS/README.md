@@ -1,213 +1,236 @@
-# Exam Management Service
+# GalPHOS Exam Management Service
 
-A comprehensive Scala-based microservice for managing exams in the GalPHOS education platform.
+This is the Exam Management Service (ExamMS) for the GalPHOS (Galaxy Physics Online System). It provides comprehensive exam lifecycle management including exam creation, question scoring, file management, and submission handling.
 
 ## Features
 
-- **Role-based API endpoints** for Students, Coaches, Graders, and Administrators
-- **Complete exam lifecycle management** (create, publish, manage, delete)
-- **Question and scoring configuration**
-- **File upload and management** for exam materials
-- **JWT-based authentication** with role verification
-- **PostgreSQL database** with connection pooling
-- **RESTful API** with JSON responses
-- **CORS support** for frontend integration
+- **Complete Exam Lifecycle Management**
+  - Exam creation, modification, and deletion
+  - Question score configuration and management
+  - File upload and storage integration
+  - Exam status tracking and publishing
 
-## Architecture
+- **Role-Based Access Control**
+  - Admin: Full exam management capabilities
+  - Student: Access to published exams and answer submission
+  - Coach: Exam monitoring and proxy submission for students
+  - Grader: Access to exams for grading purposes
 
-The service follows a clean architecture pattern:
+- **File Storage Integration**
+  - Integrated with FileStorageService for all file operations
+  - Support for question files, answer files, and submission images
+  - Automatic file type validation and size limits
 
-```
-src/main/scala/
-├── Config/           # Configuration classes
-├── Controllers/      # HTTP request handlers
-├── Database/         # Database connection and operations
-├── Models/           # Data models and DTOs
-├── Process/          # Server initialization and utilities
-└── Services/         # Business logic layer
-```
+- **Submission Management**
+  - Student answer submission with image upload
+  - Coach proxy submission for managed students
+  - Submission status tracking and scoring
 
-## Prerequisites
+## Technology Stack
 
-- **Scala 3.4.2**
-- **SBT 1.10.6**
-- **PostgreSQL** with database `exam_service`
-- **Java 11 or higher**
-
-## Database Setup
-
-1. Make sure PostgreSQL is running with user `db` and password `root`
-2. Run the database setup script:
-   ```cmd
-   setup_database.bat
-   ```
-
-This will create the `exam_service` database with the required tables:
-- `exams` - Main exam information
-- `questions` - Exam questions
-- `question_scores` - Scoring configuration
-- `exam_files` - File attachments
-- `exam_permissions` - Role-based access control
-
-## Configuration
-
-Edit `server_config.json` to configure:
-- Server IP and port (default: localhost:3003)
-- Database connection settings
-- External service URLs (auth, file storage, etc.)
-
-## Running the Service
-
-### Development Mode
-```cmd
-start.bat
-```
-
-### Manual Steps
-```cmd
-sbt compile
-sbt run
-```
+- **Language**: Scala 3.4.2
+- **Framework**: HTTP4S with Cats Effect
+- **Database**: PostgreSQL with HikariCP connection pooling
+- **JSON**: Circe for JSON processing
+- **Authentication**: JWT-based authentication
+- **Build Tool**: SBT 1.9.7
 
 ## API Endpoints
 
+### Admin APIs
+- `GET /api/admin/exams` - Get all exams
+- `POST /api/admin/exams` - Create new exam
+- `PUT /api/admin/exams/{id}` - Update exam
+- `DELETE /api/admin/exams/{id}` - Delete exam
+- `POST /api/admin/exams/{id}/question-scores` - Set question scores
+- `GET /api/admin/exams/{id}/question-scores` - Get question scores
+- `PUT /api/admin/exams/{id}/question-scores/{number}` - Update question score
+- `POST /api/admin/exams/{id}/publish` - Publish exam
+- `POST /api/admin/exams/{id}/unpublish` - Unpublish exam
+
 ### Student APIs
-- `GET /api/student/exams` - Get exam list (view only)
-- `GET /api/student/exams/{examId}` - Get exam details
-- `GET /api/student/exams/{examId}/score` - Get detailed score
-- `GET /api/student/exams/{examId}/ranking` - Get score ranking
+- `GET /api/student/exams` - Get available exams
+- `GET /api/student/exams/{id}` - Get exam details
+- `POST /api/student/exams/{id}/submit` - Submit exam answers
+- `GET /api/student/exams/{id}/submission` - Get submission status
 
 ### Coach APIs
-- `GET /api/coach/exams` - Get exam list with filtering
-- `GET /api/coach/exams/{examId}` - Get exam details with statistics
-- `GET /api/coach/exams/{examId}/download` - Download exam files
-- `GET /api/coach/exams/{examId}/scores/statistics` - Get score statistics
-- `GET /api/coach/exams/{examId}/ranking` - Get student ranking
-- `POST /api/coach/exams/{examId}/scores/export` - Export score report
+- `GET /api/coach/exams` - Get exams with participation stats
+- `GET /api/coach/exams/{id}` - Get exam details with stats
+- `GET /api/coach/exams/{id}/score-stats` - Get score statistics
+- `POST /api/coach/exams/{id}/submissions` - Submit answers for student
+- `GET /api/coach/exams/{id}/submissions` - Get student submissions
 
 ### Grader APIs
-- `GET /api/grader/exams` - Get exams available for grading
-- `GET /api/grader/exams/{examId}` - Get exam details with grading info
-- `GET /api/grader/exams/{examId}/progress` - Get grading progress
-- `GET /api/grader/exams/{examId}/questions/scores` - Get question scores
+- `GET /api/grader/exams` - Get gradable exams
+- `GET /api/grader/exams/{id}` - Get exam details for grading
+- `GET /api/grader/exams/{id}/progress` - Get grading progress
 
-### Admin APIs
-- `GET /api/admin/exams` - Get comprehensive exam list
-- `POST /api/admin/exams` - Create new exam
-- `PUT /api/admin/exams/{examId}` - Update exam
-- `DELETE /api/admin/exams/{examId}` - Delete exam
-- `POST /api/admin/exams/{examId}/publish` - Publish exam
-- `POST /api/admin/exams/{examId}/unpublish` - Unpublish exam
-- `POST /api/admin/exams/{examId}/files` - Upload exam files
-- `POST /api/admin/exams/{examId}/questions/scores` - Set question scores
-- `GET /api/admin/exams/{examId}/questions/scores` - Get question scores
+### File Upload APIs
+- `POST /api/upload/exam-files` - Upload exam files
+- `POST /api/upload/answer-image` - Upload answer images
+- `POST /api/coach/exams/{id}/upload-answer` - Coach upload answer images
 
-## Authentication
+## Configuration
 
-All API endpoints require JWT authentication via the `Authorization` header:
-```
-Authorization: Bearer <JWT_TOKEN>
-```
-
-Role-based access control:
-- **Student**: Access to own exam viewing and scores
-- **Coach**: Access to exam monitoring and statistics
-- **Grader**: Access to grading-related endpoints
-- **Admin**: Full access to all endpoints
-
-## Testing
-
-Run the API test script:
-```powershell
-./test_api.ps1
-```
-
-## Integration with Other Services
-
-The Exam Management Service integrates with:
-
-- **User Authentication Service** (port 3001) - Token validation
-- **Submission Service** (port 3004) - Exam submissions
-- **Grading Service** (port 3005) - Grading tasks
-- **Score Statistics Service** (port 3006) - Score calculations
-- **File Storage Service** (port 3008) - File management
-
-## Error Handling
-
-The service returns consistent error responses:
+### Database Configuration
+Configure your PostgreSQL connection in `server_config.json`:
 
 ```json
 {
-  "error": true,
-  "message": "Error description",
-  "code": "ERROR_CODE",
-  "details": {
-    "field": "validation error details"
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/galphos_exam",
+  "username": "galphos_user",
+  "password": "galphos_password",
+  "maximumPoolSize": 20
+}
+```
+
+### File Storage Service Configuration
+Configure the FileStorageService integration:
+
+```json
+{
+  "fileStorageService": {
+    "host": "localhost",
+    "port": 3008,
+    "internalApiKey": "your-internal-api-key-here",
+    "timeout": 30000,
+    "uploadMaxSize": 52428800,
+    "allowedImageTypes": ["jpg", "jpeg", "png", "gif"],
+    "allowedDocumentTypes": ["pdf", "doc", "docx"]
   }
 }
 ```
 
-Common error codes:
-- `UNAUTHORIZED` - Missing or invalid authentication
-- `EXAM_NOT_FOUND` - Requested exam doesn't exist
-- `FETCH_EXAMS_ERROR` - Database query failed
-- `CREATE_EXAM_ERROR` - Exam creation failed
-- `UPLOAD_FILES_ERROR` - File upload failed
+## Installation & Setup
 
-## Logging
+### Prerequisites
+- Java 21 or higher
+- SBT 1.9.7
+- PostgreSQL 13 or higher
+- File Storage Service running on port 3008
 
-Logs are written to:
-- Console output
-- `logs/exam-service.log` (rolling daily, max 100MB per file)
+### Database Setup
+1. Create the database:
+```sql
+CREATE DATABASE galphos_exam;
+CREATE USER galphos_user WITH PASSWORD 'galphos_password';
+GRANT ALL PRIVILEGES ON DATABASE galphos_exam TO galphos_user;
+```
 
-Log levels can be configured in `src/main/resources/logback.xml`.
+2. Run the initialization script:
+```bash
+psql -U galphos_user -d galphos_exam -f init_database.sql
+```
+
+### Configuration
+1. Copy the configuration file:
+```bash
+cp server_config.json.example server_config.json
+```
+
+2. Edit `server_config.json` with your database and service configurations.
+
+### Build & Run
+```bash
+# Build the project
+sbt compile
+
+# Run tests
+sbt test
+
+# Start the service
+sbt run
+
+# Or use the startup scripts
+# Windows:
+start.bat
+
+# Linux/macOS:
+chmod +x start.sh
+./start.sh
+```
+
+## Service Integration
+
+### File Storage Service
+The ExamMS integrates with the FileStorageService for all file operations:
+
+```
+Frontend → ExamMS (3003) → FileStorageService (3008) → File System
+```
+
+### Authentication
+All API endpoints require JWT authentication. The service validates tokens and enforces role-based access control.
+
+### Database Schema
+The service uses the following main tables:
+- `exams` - Exam information
+- `exam_questions` - Question scores
+- `exam_submissions` - Student submissions
+- `exam_answers` - Answer details
+- `exam_files` - File metadata
 
 ## Development
 
-### Adding New Endpoints
+### Project Structure
+```
+src/main/scala/
+├── Config/           # Configuration management
+├── Controllers/      # HTTP request handlers
+├── Database/         # Database connection and utilities
+├── Main/            # Application entry point
+├── Models/          # Data models and DTOs
+├── Process/         # Initialization and business processes
+└── Services/        # Business logic services
+```
 
-1. Add the route to the appropriate controller
-2. Implement the business logic in the service layer
-3. Add any required database operations
-4. Update the API documentation
+### Testing
+Run tests with:
+```bash
+sbt test
+```
 
-### Database Schema Changes
-
-1. Update `init_database.sql`
-2. Add migration scripts if needed
-3. Update the model classes
-4. Test with existing data
+### Logging
+The service uses SLF4J with Logback for logging. Configure logging levels in `src/main/resources/logback.xml`.
 
 ## Production Deployment
 
-1. Build the application:
-   ```cmd
-   sbt assembly
-   ```
+### Docker Support
+Build and run with Docker:
+```bash
+sbt assembly
+docker build -t galphos-exam-service .
+docker run -p 3003:3003 galphos-exam-service
+```
 
-2. The JAR file will be created in `target/scala-3.4.2/`
+### Performance Considerations
+- Connection pooling with HikariCP
+- Optimized database queries with indexes
+- Efficient file handling through FileStorageService
+- Configurable memory settings in startup scripts
 
-3. Run with:
-   ```cmd
-   java -jar target/scala-3.4.2/ExamManagementService-assembly-0.1.0-SNAPSHOT.jar
-   ```
+## API Documentation
 
-## Version History
+For detailed API documentation, see [EXAM_MANAGEMENT_API.md](EXAM_MANAGEMENT_API.md).
 
-- **v1.0.0** - Initial release with full API implementation
-- Role-based access control
-- File upload support
-- Database integration
-- JWT authentication
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Run tests and ensure they pass
+6. Submit a pull request
 
 ## License
 
-Part of the GalPHOS education platform.
+This project is part of the GalPHOS system and is licensed under the same terms as the main project.
 
 ## Support
 
-For issues and questions, check the logs in `logs/exam-service.log` and verify:
-1. PostgreSQL is running and accessible
-2. Database `exam_service` exists and is properly configured
-3. Authentication service is available (if using token validation)
-4. All required dependencies are installed
+For issues and questions:
+1. Check the logs for error details
+2. Review the API documentation
+3. Ensure all dependencies are properly configured
+4. Verify database connectivity and permissions

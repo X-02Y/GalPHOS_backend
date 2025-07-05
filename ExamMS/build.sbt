@@ -1,101 +1,72 @@
-ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.4.2"
-
-assembly / assemblyMergeStrategy := {
-  case PathList("module-info.class") => MergeStrategy.discard
-  case PathList("META-INF", "versions", xs @ _, "module-info.class") => MergeStrategy.discard
-  case PathList("META-INF", "io.netty.versions.properties") => MergeStrategy.first
-
-  // 保留 PostgresSQL 驱动服务文件
-  case PathList("META-INF", "services", "java.sql.Driver") => MergeStrategy.concat
-
-  // 以下是常见的其他冲突处理策略
-  case x if x.endsWith("/module-info.class") => MergeStrategy.discard
-  case PathList("META-INF", xs @ _*) => MergeStrategy.discard
-  case "reference.conf" => MergeStrategy.concat
-  case _ => MergeStrategy.first
-}
-
-assembly / mainClass := Some("Process.Server")
-enablePlugins(JavaAppPackaging)
-
-// 不发布源码和文档
-Compile / packageDoc / publishArtifact := false
-Compile / packageSrc / publishArtifact := false
-Compile / run / fork := true
-
-resolvers ++= Seq(
-  "Aliyun Central" at "https://maven.aliyun.com/repository/central",
-  "Huawei Mirror" at "https://repo.huaweicloud.com/repository/maven/",
-  "Tsinghua Mirror" at "https://mirrors.tuna.tsinghua.edu.cn/maven-central/",
-  // 官方 Maven Central 仓库
-  Resolver.mavenCentral
-)
-
-Universal / packageBin / mappings ++= {
-  val baseDir = baseDirectory.value
-  Seq(
-    baseDir / "server_config.json" -> "server_config.json",
-  )
-}
+ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / organization := "com.galphos"
+ThisBuild / organizationName := "GalPHOS"
 
 lazy val root = (project in file("."))
   .settings(
     name := "ExamManagementService",
-    // 添加编码设置
-    javacOptions ++= Seq("-encoding", "UTF-8"),
-    scalacOptions ++= Seq("-encoding", "UTF-8", "-Xmax-inlines", "64"),
+    
+    libraryDependencies ++= Seq(
+      // Web framework
+      "org.http4s" %% "http4s-dsl" % "0.23.18",
+      "org.http4s" %% "http4s-ember-server" % "0.23.18",
+      "org.http4s" %% "http4s-ember-client" % "0.23.18",
+      "org.http4s" %% "http4s-circe" % "0.23.18",
+      
+      // JSON
+      "io.circe" %% "circe-core" % "0.14.5",
+      "io.circe" %% "circe-generic" % "0.14.5",
+      "io.circe" %% "circe-parser" % "0.14.5",
+      
+      // Database
+      "org.postgresql" % "postgresql" % "42.7.1",
+      "com.zaxxer" % "HikariCP" % "5.1.0",
+      
+      // Cats Effect
+      "org.typelevel" %% "cats-effect" % "3.5.4",
+      "org.typelevel" %% "cats-core" % "2.10.0",
+      
+      // Logging
+      "ch.qos.logback" % "logback-classic" % "1.4.14",
+      "org.slf4j" % "slf4j-api" % "2.0.9",
+      
+      // JWT
+      "com.github.jwt-scala" %% "jwt-circe" % "9.4.4",
+      
+      // Configuration
+      "com.typesafe" % "config" % "1.4.3",
+      
+      // Testing
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test,
+      "org.scalatestplus" %% "mockito-4-6" % "3.2.15.0" % Test
+    ),
+    
+    // Assembly plugin settings
+    assembly / assemblyMergeStrategy := {
+      case "META-INF/MANIFEST.MF" => MergeStrategy.discard
+      case "META-INF/versions/9/module-info.class" => MergeStrategy.discard
+      case "reference.conf" => MergeStrategy.concat
+      case x if x.endsWith(".conf") => MergeStrategy.concat
+      case x if x.endsWith(".properties") => MergeStrategy.concat
+      case x if x.endsWith(".xml") => MergeStrategy.concat
+      case x if x.endsWith(".class") => MergeStrategy.last
+      case x if x.endsWith(".jar") => MergeStrategy.last
+      case x => MergeStrategy.first
+    },
+    
+    // Java options
+    javacOptions ++= Seq("-source", "21", "-target", "21"),
+    
+    // Scala options
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-feature",
+      "-unchecked",
+      "-Wunused:imports",
+      "-Wunused:locals",
+      "-Wunused:params",
+      "-Wunused:privates",
+      "-Xmax-inlines:64"
+    )
   )
-
-val http4sVersion = "0.23.30"
-val circeVersion = "0.14.10"
-Compile / run / fork := true
-
-libraryDependencies ++= Seq(
-
-  // http4s 核心库
-  "org.http4s" %% "http4s-dsl" % http4sVersion,
-  "org.http4s" %% "http4s-ember-server" % http4sVersion,
-  "org.http4s" %% "http4s-ember-client" % http4sVersion,
-  "org.http4s" %% "http4s-circe" % http4sVersion,
-
-  // Circe 库
-  "io.circe" %% "circe-core" % circeVersion,
-  "io.circe" %% "circe-generic" % circeVersion,
-  "io.circe" %% "circe-parser" % circeVersion,
-  "io.circe" %% "circe-yaml" % "1.15.0",
-
-  // 日志库
-  "org.typelevel" %% "log4cats-core" % "2.7.0",
-  "org.typelevel" %% "log4cats-slf4j" % "2.7.0",
-  "ch.qos.logback" % "logback-classic" % "1.5.16",
-
-  // STTP 客户端
-  "com.softwaremill.sttp.client3" %% "core" % "3.10.3",
-  "com.softwaremill.sttp.client3" %% "async-http-client-backend-cats" % "3.10.3",
-  "com.softwaremill.sttp.client3" %% "fs2" % "3.10.3",
-  "com.softwaremill.sttp.client3" %% "circe" % "3.10.3",
-
-  // FS2 库
-  "co.fs2" %% "fs2-core" % "3.11.0",
-  "co.fs2" %% "fs2-io" % "3.11.0",
-
-  // JWT 库
-  "com.github.jwt-scala" %% "jwt-core" % "10.0.1",
-  "com.github.jwt-scala" %% "jwt-circe" % "10.0.1",
-
-  // 其他库
-  "joda-time" % "joda-time" % "2.12.7",
-  "org.eclipse.jgit" % "org.eclipse.jgit" % "5.13.0.202109080827-r",
-  "com.zaxxer" % "HikariCP" % "5.1.0",
-  "org.postgresql" % "postgresql" % "42.7.2",
-
-  // Multipart support for file uploads
-  // Note: multipart support is included in http4s-dsl and http4s-circe
-)
-
-// 引入 jackson 辅助 json 序列化
-libraryDependencies ++= Seq(
-  "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.2",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2"
-)

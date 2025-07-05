@@ -2,369 +2,484 @@ package Models
 
 import io.circe.{Decoder, Encoder}
 import io.circe.generic.auto.*
-import java.time.{Instant, LocalDateTime}
-import java.util.UUID
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
-// Enums
-enum ExamStatus:
-  case draft, published, active, completed, cancelled
+// JSON encoders/decoders for LocalDateTime
+implicit val localDateTimeEncoder: Encoder[LocalDateTime] = 
+  Encoder.encodeString.contramap(_.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
 
-enum QuestionType:
-  case multiple_choice, short_answer, essay, calculation
+implicit val localDateTimeDecoder: Decoder[LocalDateTime] = 
+  Decoder.decodeString.emap { str =>
+    try {
+      // Try ISO format first
+      Right(LocalDateTime.parse(str, DateTimeFormatter.ISO_DATE_TIME))
+    } catch {
+      case _: Exception =>
+        try {
+          // Try local datetime format
+          Right(LocalDateTime.parse(str, DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+        } catch {
+          case _: Exception => Left(s"Invalid datetime format: $str")
+        }
+    }
+  }
 
-enum FileType:
-  case question_paper, answer_key, resource, attachment
+// 统一API响应格式
+case class ApiResponse[T](
+  success: Boolean,
+  data: Option[T] = None,
+  message: Option[String] = None
+)
 
-// Request/Response DTOs
-case class LoginRequest(username: String, password: String)
-case class AuthResponse(success: Boolean, token: Option[String], message: String, user: Option[UserInfo])
-case class UserInfo(id: String, username: String, role: String, email: Option[String])
+object ApiResponse {
+  def success[T](data: T, message: String = "操作成功"): ApiResponse[T] =
+    ApiResponse(success = true, data = Some(data), message = Some(message))
 
-// Exam Request Models
-case class CreateExamRequest(
+  def error(message: String): ApiResponse[String] =
+    ApiResponse(success = false, message = Some(message))
+}
+
+// 分页响应
+case class PaginatedResponse[T](
+  items: List[T],
+  total: Int,
+  page: Int,
+  limit: Int,
+  pages: Int
+)
+
+// 考试状态枚举
+enum ExamStatus(val value: String):
+  case Draft extends ExamStatus("draft")
+  case Published extends ExamStatus("published")
+  case Ongoing extends ExamStatus("ongoing")
+  case Grading extends ExamStatus("grading")
+  case Completed extends ExamStatus("completed")
+
+object ExamStatus {
+  def fromString(status: String): ExamStatus = status.toLowerCase match {
+    case "draft" => Draft
+    case "published" => Published
+    case "ongoing" => Ongoing
+    case "grading" => Grading
+    case "completed" => Completed
+    case _ => throw new IllegalArgumentException(s"Unknown status: $status")
+  }
+
+  implicit val encoder: Encoder[ExamStatus] = Encoder.encodeString.contramap(_.value)
+  implicit val decoder: Decoder[ExamStatus] = Decoder.decodeString.emap { str =>
+    try Right(ExamStatus.fromString(str))
+    catch case _: IllegalArgumentException => Left(s"Invalid status: $str")
+  }
+}
+
+// 提交状态枚举
+enum SubmissionStatus(val value: String):
+  case Submitted extends SubmissionStatus("submitted")
+  case Graded extends SubmissionStatus("graded")
+
+object SubmissionStatus {
+  def fromString(status: String): SubmissionStatus = status.toLowerCase match {
+    case "submitted" => Submitted
+    case "graded" => Graded
+    case _ => throw new IllegalArgumentException(s"Unknown status: $status")
+  }
+
+  implicit val encoder: Encoder[SubmissionStatus] = Encoder.encodeString.contramap(_.value)
+  implicit val decoder: Decoder[SubmissionStatus] = Decoder.decodeString.emap { str =>
+    try Right(SubmissionStatus.fromString(str))
+    catch case _: IllegalArgumentException => Left(s"Invalid status: $str")
+  }
+}
+
+// 文件类型枚举
+enum FileType(val value: String):
+  case Question extends FileType("question")
+  case Answer extends FileType("answer")
+  case AnswerSheet extends FileType("answerSheet")
+  case Submission extends FileType("submission")
+
+object FileType {
+  def fromString(fileType: String): FileType = fileType.toLowerCase match {
+    case "question" => Question
+    case "answer" => Answer
+    case "answersheet" => AnswerSheet
+    case "submission" => Submission
+    case _ => throw new IllegalArgumentException(s"Unknown file type: $fileType")
+  }
+
+  implicit val encoder: Encoder[FileType] = Encoder.encodeString.contramap(_.value)
+  implicit val decoder: Decoder[FileType] = Decoder.decodeString.emap { str =>
+    try Right(FileType.fromString(str))
+    catch case _: IllegalArgumentException => Left(s"Invalid file type: $str")
+  }
+}
+
+// 考试文件
+case class ExamFile(
+  id: String,
+  name: String,
+  filename: Option[String] = None,
+  originalName: Option[String] = None,
+  url: String,
+  size: Long,
+  uploadTime: LocalDateTime,
+  mimetype: Option[String] = None,
+  fileType: Option[FileType] = None
+)
+
+// 考试基础信息
+case class BaseExam(
+  id: String,
   title: String,
-  description: Option[String],
-  subject: String,
-  startTime: String, // ISO string format
-  endTime: String,   // ISO string format
-  duration: Int,     // in minutes
-  instructions: Option[String],
-  settings: Option[ExamSettings],
-  questions: List[CreateQuestionRequest] = List.empty
+  description: String,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
+  status: ExamStatus,
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime,
+  duration: Option[Int] = None
 )
 
-case class CreateQuestionRequest(
-  number: Int = 1, // Question number/order
-  content: String,
-  questionType: String, // multiple_choice, short_answer, essay, calculation
-  score: BigDecimal,
-  options: Option[List[String]] = None,
-  correctAnswer: Option[String] = None
-)
-
-case class UpdateExamRequest(
-  title: Option[String],
-  description: Option[String],
-  subject: Option[String],
-  startTime: Option[String],
-  endTime: Option[String],
-  duration: Option[Int],
-  instructions: Option[String],
-  settings: Option[ExamSettings]
-)
-
-case class SetQuestionScoresRequest(
-  scores: List[QuestionScore]
-)
-
-case class ExportScoreRequest(
-  format: String // csv, excel, pdf
-)
-
-// Pagination
-case class PaginationInfo(page: Int, limit: Int, total: Int, totalPages: Int)
-
-// Core Models
+// 完整考试信息
 case class Exam(
   id: String,
   title: String,
-  description: Option[String],
-  subject: String,
-  startTime: Instant,
-  endTime: Instant,
-  duration: Int, // in minutes
-  status: ExamStatus,
-  totalScore: BigDecimal,
-  questionCount: Int,
-  createdAt: Instant,
-  updatedAt: Instant
-)
-
-case class ExamDetail(
-  id: String,
-  title: String,
-  description: Option[String],
-  subject: String,
-  startTime: Instant,
-  endTime: Instant,
-  duration: Int,
-  status: ExamStatus,
-  totalScore: BigDecimal,
-  questionCount: Int,
-  instructions: Option[String],
-  questions: List[Question],
-  files: List[ExamFile],
-  settings: Option[ExamSettings],
-  createdAt: Instant,
-  updatedAt: Instant
-)
-
-case class Question(
-  number: Int,
-  content: String,
-  questionType: QuestionType,
-  score: BigDecimal,
-  options: Option[List[String]] = None, // for multiple choice
-  correctAnswer: Option[String] = None
-)
-
-case class QuestionScore(
-  questionNumber: Int,
-  maxScore: BigDecimal,
-  partialScoring: Option[Boolean] = Some(false),
-  scoringCriteria: Option[List[ScoringCriteria]] = None
-)
-
-case class ScoringCriteria(
   description: String,
-  points: BigDecimal
-)
-
-case class ExamFile(
-  id: String,
-  examId: String,
-  fileName: String,
-  filePath: String,
-  fileType: FileType,
-  fileSize: Long,
-  mimeType: Option[String],
-  uploadedBy: String,
-  uploadedAt: Instant
-)
-
-case class ExamSettings(
-  allowLateSubmission: Boolean = false,
-  shuffleQuestions: Boolean = false,
-  showResultsImmediately: Boolean = false,
-  maxAttempts: Int = 1,
-  requirePassword: Boolean = false,
-  examPassword: Option[String] = None
-)
-
-// Statistics Models
-case class ExamStats(
-  totalParticipants: Int,
-  submittedCount: Int,
-  averageScore: BigDecimal,
-  highestScore: BigDecimal,
-  lowestScore: BigDecimal,
-  passRate: BigDecimal
-)
-
-case class ExamScoreStats(
-  totalParticipants: Int,
-  averageScore: BigDecimal,
-  median: BigDecimal,
-  standardDeviation: BigDecimal,
-  highestScore: BigDecimal,
-  lowestScore: BigDecimal,
-  passRate: BigDecimal
-)
-
-case class ScoreDistribution(
-  ranges: List[ScoreRange]
-)
-
-case class ScoreRange(
-  min: BigDecimal,
-  max: BigDecimal,
-  count: Int,
-  percentage: BigDecimal
-)
-
-// Grading Models
-case class GraderExam(
-  id: String,
-  title: String,
-  subject: String,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
   status: ExamStatus,
-  totalScore: BigDecimal,
-  questionCount: Int,
-  participantCount: Int,
-  gradedCount: Int,
-  endTime: Instant
-)
-
-case class GradingInfo(
-  totalStudents: Int,
-  gradedStudents: Int,
-  pendingGrading: Int,
-  averageScore: Option[BigDecimal]
-)
-
-case class GradingProgress(
-  completed: Int,
-  total: Int,
-  percentage: BigDecimal
-)
-
-case class ExamGradingProgress(
-  examId: String,
-  totalSubmissions: Int,
-  gradedSubmissions: Int,
-  pendingSubmissions: Int,
-  progressPercentage: BigDecimal
-)
-
-case class GradingStats(
-  averageGradingTime: Option[Long], // in minutes
-  gradersAssigned: Int,
-  questionsGraded: Int,
-  totalQuestions: Int
-)
-
-// Student Models
-case class DetailedScore(
-  examId: String,
-  studentId: String,
-  totalScore: BigDecimal,
-  maxScore: BigDecimal,
-  percentage: BigDecimal,
-  rank: Option[Int],
-  questionScores: List[QuestionDetailScore]
-)
-
-case class QuestionDetailScore(
-  questionNumber: Int,
-  score: BigDecimal,
-  maxScore: BigDecimal,
-  feedback: Option[String]
-)
-
-case class ScoreBreakdown(
-  byQuestion: List[QuestionBreakdown],
-  byCategory: Option[List[CategoryBreakdown]]
-)
-
-case class QuestionBreakdown(
-  questionNumber: Int,
-  score: BigDecimal,
-  maxScore: BigDecimal,
-  correct: Boolean
-)
-
-case class CategoryBreakdown(
-  category: String,
-  score: BigDecimal,
-  maxScore: BigDecimal,
-  questionCount: Int
-)
-
-case class Ranking(
-  rank: Int,
-  studentId: String,
-  studentName: String,
-  score: BigDecimal,
-  percentage: BigDecimal
-)
-
-// Coach Models
-case class StudentRanking(
-  rank: Int,
-  studentId: String,
-  studentName: String,
-  score: BigDecimal,
-  percentage: BigDecimal,
-  submissionTime: Instant
-)
-
-case class StudentRank(
-  studentId: String,
-  studentName: String,
-  rank: Int,
-  score: BigDecimal,
-  percentage: BigDecimal
-)
-
-// Admin Models
-case class AdminExam(
-  id: String,
-  title: String,
-  description: Option[String],
-  subject: String,
-  startTime: Instant,
-  endTime: Instant,
-  duration: Int,
-  status: ExamStatus,
-  totalScore: BigDecimal,
-  questionCount: Int,
-  participantCount: Int,
-  submissionCount: Int,
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime,
+  duration: Option[Int] = None,
+  questionFile: Option[ExamFile] = None,
+  answerFile: Option[ExamFile] = None,
+  answerSheetFile: Option[ExamFile] = None,
   createdBy: String,
-  createdAt: Instant,
-  updatedAt: Instant
+  participants: List[String] = List.empty,
+  totalQuestions: Option[Int] = None,
+  maxScore: Option[Double] = None,
+  subject: Option[String] = None,
+  instructions: Option[String] = None
 )
 
-// Response Models
-case class ExamsResponse(
-  exams: List[Exam],
-  total: Int,
-  pagination: Option[PaginationInfo] = None
+// 考试问题
+case class Question(
+  id: String,
+  number: Int,
+  score: Double,
+  maxScore: Option[Double] = None,
+  content: Option[String] = None,
+  examId: String
 )
 
-case class AdminExamsResponse(
-  exams: List[AdminExam],
-  total: Int,
-  pagination: PaginationInfo
+// 考试答案
+case class ExamAnswer(
+  questionNumber: Int,
+  imageUrl: String,
+  uploadTime: LocalDateTime
 )
 
-case class GraderExamsResponse(
-  exams: List[GraderExam],
-  total: Int,
-  pagination: PaginationInfo
+// 考试提交
+case class ExamSubmission(
+  id: String,
+  examId: String,
+  studentUsername: String,
+  submittedBy: Option[String] = None,
+  answers: List[ExamAnswer],
+  submittedAt: LocalDateTime,
+  status: SubmissionStatus,
+  score: Option[Double] = None,
+  rank: Option[Int] = None
 )
 
-case class ExamDetailResponse(
-  exam: ExamDetail,
-  statistics: Option[ExamStats] = None,
-  gradingInfo: Option[GradingInfo] = None,
-  progress: Option[GradingProgress] = None
+// 请求模型
+case class CreateExamRequest(
+  title: String,
+  description: String,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
+  totalQuestions: Int,
+  duration: Int,
+  status: ExamStatus = ExamStatus.Draft,
+  totalScore: Option[Double] = None,
+  questions: Option[List[CreateExamQuestionRequest]] = None
+)
+
+case class CreateExamQuestionRequest(
+  number: Int,
+  score: Double
+)
+
+case class UpdateExamRequest(
+  title: Option[String] = None,
+  description: Option[String] = None,
+  startTime: Option[LocalDateTime] = None,
+  endTime: Option[LocalDateTime] = None,
+  totalQuestions: Option[Int] = None,
+  duration: Option[Int] = None,
+  resetScoresIfNeeded: Option[Boolean] = None
+)
+
+case class SetQuestionScoresRequest(
+  questions: List[QuestionScoreRequest]
+)
+
+case class QuestionScoreRequest(
+  number: Int,
+  score: Double
+)
+
+case class UpdateQuestionScoreRequest(
+  score: Double
+)
+
+case class PublishExamRequest(
+  questionFileId: Option[String] = None,
+  answerFileId: Option[String] = None,
+  answerSheetFileId: Option[String] = None
+)
+
+case class SubmitAnswersRequest(
+  answers: List[ExamAnswer]
+)
+
+case class CoachSubmitAnswersRequest(
+  studentUsername: String,
+  answers: List[ExamAnswer]
+)
+
+case class FileUploadRequest(
+  file: Array[Byte],
+  originalName: String,
+  examId: String,
+  fileType: FileType
+)
+
+case class JsonFileUploadRequest(
+  fileContent: String, // Base64 encoded file content
+  originalName: String,
+  examId: String,
+  fileType: String // "question", "answer", "answerSheet"
+)
+
+case class ImageUploadRequest(
+  file: Array[Byte],
+  examId: String,
+  questionNumber: Int,
+  studentUsername: Option[String] = None
+)
+
+// 响应模型
+case class ExamListResponse(
+  id: String,
+  title: String,
+  description: String,
+  questionFile: Option[ExamFile] = None,
+  answerFile: Option[ExamFile] = None,
+  answerSheetFile: Option[ExamFile] = None,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
+  status: ExamStatus,
+  totalQuestions: Option[Int] = None,
+  duration: Option[Int] = None,
+  createdAt: LocalDateTime,
+  createdBy: String
 )
 
 case class QuestionScoresResponse(
-  questions: List[QuestionScore],
-  totalScore: BigDecimal
+  examId: String,
+  totalQuestions: Int,
+  totalScore: Double,
+  questions: List[QuestionResponse]
 )
 
-case class ScoreDetailResponse(
-  score: DetailedScore,
-  breakdown: ScoreBreakdown
+case class QuestionResponse(
+  id: String,
+  number: Int,
+  score: Double,
+  maxScore: Option[Double] = None
 )
 
-case class ScoreRankingResponse(
-  ranking: List[Ranking],
-  myRank: Int,
-  totalParticipants: Int
+case class FileUploadResponse(
+  fileId: String,
+  originalName: String,
+  url: String,
+  size: Long,
+  uploadTime: LocalDateTime
 )
 
-case class StudentRankingResponse(
-  rankings: List[StudentRanking],
-  myStudents: List[StudentRank]
+case class ImageUploadResponse(
+  imageUrl: String,
+  fileName: String,
+  fileSize: Long,
+  uploadTime: LocalDateTime
 )
 
-case class ExamScoreStatisticsResponse(
-  statistics: ExamScoreStats,
-  distribution: ScoreDistribution
+case class CoachExamResponse(
+  id: String,
+  title: String,
+  description: String,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
+  duration: Int,
+  status: ExamStatus,
+  totalQuestions: Int,
+  maxScore: Double,
+  questionFile: Option[ExamFile] = None,
+  answerSheetFile: Option[ExamFile] = None,
+  totalParticipants: Int,
+  myStudentsParticipated: Int,
+  myStudentsTotal: Int
 )
 
-case class ExamGradingProgressResponse(
-  progress: ExamGradingProgress,
-  statistics: GradingStats
+case class ParticipationStats(
+  totalStudents: Int,
+  submittedStudents: Int,
+  gradedStudents: Int,
+  avgScore: Double,
+  submissions: List[SubmissionSummary]
 )
 
-case class SuccessResponse(
+case class SubmissionSummary(
+  studentId: String,
+  studentName: String,
+  submittedAt: LocalDateTime,
+  status: SubmissionStatus,
+  score: Option[Double] = None,
+  rank: Option[Int] = None
+)
+
+case class ExamDetailsWithStats(
+  exam: Exam,
+  participationStats: ParticipationStats
+)
+
+case class ScoreStats(
+  totalStudents: Int,
+  submittedStudents: Int,
+  averageScore: Double,
+  scores: List[StudentScore]
+)
+
+case class StudentScore(
+  studentId: String,
+  studentName: String,
+  score: Double,
+  submittedAt: LocalDateTime
+)
+
+case class GradableExam(
+  id: String,
+  title: String,
+  description: String,
+  startTime: LocalDateTime,
+  endTime: LocalDateTime,
+  status: ExamStatus,
+  maxScore: Double,
+  subject: Option[String] = None,
+  totalSubmissions: Int,
+  pendingGrading: Int
+)
+
+case class GradingProgress(
+  examId: String,
+  examTitle: String,
+  totalSubmissions: Int,
+  gradedSubmissions: Int,
+  pendingSubmissions: Int,
+  myCompletedTasks: Int,
+  progress: Double
+)
+
+// 内部服务通信模型
+case class FileStorageUploadRequest(
+  originalName: String,
+  fileContent: List[Int], // JSON serializable format for byte array
+  fileType: String,
+  mimeType: String,
+  uploadUserId: String,
+  uploadUserType: String,
+  examId: Option[String] = None,
+  submissionId: Option[String] = None,
+  description: Option[String] = None,
+  category: String = "exam"
+)
+
+case class FileStorageDownloadRequest(
+  fileId: String,
+  requestUserId: String,
+  requestUserType: String,
+  purpose: String = "download"
+)
+
+case class FileStorageDeleteRequest(
+  fileId: String,
+  requestUserId: String,
+  requestUserType: String,
+  reason: String
+)
+
+case class FileStorageResponse(
   success: Boolean,
-  message: String,
-  exam: Option[Exam] = None,
-  files: Option[List[ExamFile]] = None,
-  scores: Option[List[QuestionScore]] = None
+  fileId: Option[String] = None,
+  url: Option[String] = None,
+  message: Option[String] = None
 )
 
-case class ErrorResponse(
-  error: Boolean,
-  message: String,
-  code: String,
-  details: Option[Map[String, String]] = None
+// 文件上传响应模型
+case class ExamFileUploadResponse(
+  fileId: String,
+  originalName: String,
+  url: String,
+  size: Long,
+  uploadTime: String
 )
 
+case class AnswerImageUploadResponse(
+  imageUrl: String,
+  fileName: String,
+  fileSize: Long,
+  uploadTime: String
+)
 
+// 预申请考试ID响应模型
+case class ReserveExamIdResponse(
+  examId: String
+)
+
+case class ReservedExamId(
+  id: String,
+  examId: String,
+  reservedBy: String,
+  reservedAt: LocalDateTime,
+  expiresAt: LocalDateTime,
+  isUsed: Boolean,
+  usedAt: Option[LocalDateTime]
+)
+
+// JWT载荷
+case class JwtPayload(
+  userId: String,
+  username: String,
+  role: String,
+  exp: Long
+)
+
+// 错误代码
+enum ErrorCode(val code: String, val message: String):
+  case ExamNotFound extends ErrorCode("EXAM_NOT_FOUND", "Exam not found")
+  case Unauthorized extends ErrorCode("UNAUTHORIZED", "User not authorized")
+  case Forbidden extends ErrorCode("FORBIDDEN", "Access denied")
+  case ValidationError extends ErrorCode("VALIDATION_ERROR", "Invalid input data")
+  case FileUploadError extends ErrorCode("FILE_UPLOAD_ERROR", "File upload failed")
+  case ExamAlreadyPublished extends ErrorCode("EXAM_ALREADY_PUBLISHED", "Exam already published")
+  case ExamNotPublished extends ErrorCode("EXAM_NOT_PUBLISHED", "Exam not published")
+  case SubmissionDeadlinePassed extends ErrorCode("SUBMISSION_DEADLINE_PASSED", "Submission deadline passed")
+  case DuplicateSubmission extends ErrorCode("DUPLICATE_SUBMISSION", "Duplicate submission")
+
+object ErrorCode {
+  def toApiResponse(error: ErrorCode): ApiResponse[String] = 
+    ApiResponse(success = false, message = Some(error.message))
+}
