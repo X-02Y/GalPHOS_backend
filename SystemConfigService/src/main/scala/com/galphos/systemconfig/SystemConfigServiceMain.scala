@@ -5,7 +5,7 @@ import cats.syntax.all._
 import com.galphos.systemconfig.config.AppConfig
 import com.galphos.systemconfig.db.DatabaseConfig
 import com.galphos.systemconfig.routes.{AdminRoutes, HealthRoutes, SettingsRoutes, VersionRoutes, UserRoutes, UnifiedDataRoutes}
-import com.galphos.systemconfig.services.{AdminProxyService, UserProxyService, UnifiedDataProxyService, AuthService, SettingsService, VersionService}
+import com.galphos.systemconfig.services.{AdminService, AdminProxyService, UserProxyService, UnifiedDataProxyService, AuthService, SettingsService, VersionService}
 import doobie.hikari.HikariTransactor
 import doobie.util.transactor.Transactor
 import fs2.io.net.Network
@@ -41,7 +41,8 @@ object SystemConfigServiceMain extends IOApp {
           
           // 初始化服务
           versionService = new VersionService(Resource.pure[IO, Transactor[IO]](transactor))
-          adminProxyService = new AdminProxyService(config.userManagementServiceUrl)
+          adminService = new AdminService(Resource.pure[IO, Transactor[IO]](transactor))
+          adminProxyService = new AdminProxyService(adminService)
           userProxyService = new UserProxyService(config.userManagementServiceUrl)
           unifiedDataProxyService = new UnifiedDataProxyService(adminProxyService, userProxyService)
           settingsService = new SettingsService(Resource.pure[IO, Transactor[IO]](transactor))

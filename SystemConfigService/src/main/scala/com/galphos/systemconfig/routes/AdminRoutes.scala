@@ -79,10 +79,14 @@ class AdminRoutes(adminProxyService: AdminProxyService, authService: AuthService
         InternalServerError(ApiResponse.error(s"创建管理员失败: ${error.getMessage}"))
       }
       
-    // 获取单个管理员（已不再需要，直接通过列表获取）
-    case GET -> Root / "admin" / "system" / "admins" / LongVar(adminId) as token =>
+    // 获取单个管理员（通过UUID查找）
+    case GET -> Root / "admin" / "system" / "admins" / adminId as token =>
       adminProxyService.getAllAdmins(token).flatMap { admins =>
-        admins.find(_.adminId.contains(adminId)) match {
+        // 使用UUID字符串匹配
+        admins.find(admin => 
+          admin.id.contains(adminId) || 
+          admin.username == adminId
+        ) match {
           case Some(admin) => Ok(ApiResponse.success(admin, "获取管理员成功"))
           case None => NotFound(ApiResponse.error("管理员不存在"))
         }
@@ -92,7 +96,7 @@ class AdminRoutes(adminProxyService: AdminProxyService, authService: AuthService
       }
       
     // 更新管理员
-    case req @ PUT -> Root / "admin" / "system" / "admins" / LongVar(adminId) as token =>
+    case req @ PUT -> Root / "admin" / "system" / "admins" / adminId as token =>
       req.req.as[UpdateAdminRequest].flatMap { updateRequest =>
         adminProxyService.updateAdmin(adminId, updateRequest, token).flatMap {
           case Some(admin) => Ok(ApiResponse.success(admin, "更新管理员成功"))
@@ -104,7 +108,7 @@ class AdminRoutes(adminProxyService: AdminProxyService, authService: AuthService
       }
       
     // 删除管理员
-    case DELETE -> Root / "admin" / "system" / "admins" / LongVar(adminId) as token =>
+    case DELETE -> Root / "admin" / "system" / "admins" / adminId as token =>
       adminProxyService.deleteAdmin(adminId, token).flatMap {
         case true => Ok(ApiResponse.success("删除成功", "管理员删除成功"))
         case false => NotFound(ApiResponse.error("管理员不存在"))
@@ -114,7 +118,7 @@ class AdminRoutes(adminProxyService: AdminProxyService, authService: AuthService
       }
       
     // 重置管理员密码
-    case req @ PUT -> Root / "admin" / "system" / "admins" / LongVar(adminId) / "password" as token =>
+    case req @ PUT -> Root / "admin" / "system" / "admins" / adminId / "password" as token =>
       req.req.as[ResetPasswordRequest].flatMap { resetRequest =>
         adminProxyService.resetPassword(adminId, resetRequest, token).flatMap {
           case true => Ok(ApiResponse.success("密码重置成功", "密码已重置"))

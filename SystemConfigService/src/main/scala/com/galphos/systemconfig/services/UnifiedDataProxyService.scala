@@ -28,15 +28,15 @@ class UnifiedDataProxyService(
     adminProxyService.createAdmin(adminRequest, token)
   }
 
-  def updateAdmin(adminId: Long, updateRequest: UpdateAdminRequest, token: String): IO[Option[Admin]] = {
+  def updateAdmin(adminId: String, updateRequest: UpdateAdminRequest, token: String): IO[Option[Admin]] = {
     adminProxyService.updateAdmin(adminId, updateRequest, token)
   }
 
-  def deleteAdmin(adminId: Long, token: String): IO[Boolean] = {
+  def deleteAdmin(adminId: String, token: String): IO[Boolean] = {
     adminProxyService.deleteAdmin(adminId, token)
   }
 
-  def resetAdminPassword(adminId: Long, resetRequest: ResetPasswordRequest, token: String): IO[Boolean] = {
+  def resetAdminPassword(adminId: String, resetRequest: ResetPasswordRequest, token: String): IO[Boolean] = {
     adminProxyService.resetPassword(adminId, resetRequest, token)
   }
 
@@ -143,7 +143,7 @@ class UnifiedDataProxyService(
    */
   private def adminToUser(admin: Admin): User = {
     User(
-      userId = admin.adminId.map(_.toString),
+      userId = admin.id,
       username = admin.username,
       phone = None, // 管理员通常不存储电话号码
       role = admin.role,

@@ -18,11 +18,12 @@ case class SystemConfig(
 
 // 管理员模型
 case class Admin(
-  adminId: Option[Long],
+  id: Option[String], // 直接使用UUID字符串
   username: String,
   passwordHash: Option[String], // 仅在内部使用，不会输出到JSON
   role: String, // 角色字段
   isSuperAdmin: Boolean,
+  status: Option[String], // 管理员状态：active, disabled
   createdAt: Option[ZonedDateTime],
   updatedAt: Option[ZonedDateTime],
   lastLogin: Option[ZonedDateTime]
@@ -30,7 +31,7 @@ case class Admin(
 
 // 管理员响应模型（不包含密码哈希）
 case class AdminResponse(
-  adminId: Option[Long],
+  id: Option[String], // 直接使用UUID字符串
   username: String,
   role: String,
   isSuperAdmin: Boolean,
@@ -48,13 +49,18 @@ case class CreateAdminRequest(
 
 // 更新管理员请求
 case class UpdateAdminRequest(
-  role: Option[String],
-  isSuperAdmin: Option[Boolean]
+  role: Option[String] = None,
+  isSuperAdmin: Option[Boolean] = None,
+  status: Option[String] = None,
+  username: Option[String] = None,
+  name: Option[String] = None,
+  avatarUrl: Option[String] = None
 )
 
 // 密码重置请求
 case class ResetPasswordRequest(
-  password: String
+  currentPassword: String, // 哈希后的当前密码（对于重置功能是空字符串的哈希）
+  newPassword: String      // 哈希后的新密码
 )
 
 // 用户模型
@@ -196,10 +202,10 @@ object Models {
   implicit val adminEncoder: Encoder[Admin] = (a: Admin) => {
     // 创建与前端AdminUser接口兼容的JSON格式
     io.circe.Json.obj(
-      "id" -> a.adminId.map(_.toString).getOrElse("").asJson,  // 将adminId转换为字符串id
+      "id" -> a.id.getOrElse("").asJson,  // 直接使用UUID字符串
       "username" -> a.username.asJson,
       "role" -> a.role.asJson,
-      "status" -> "active".asJson,  // 添加前端期望的status字段，默认为active
+      "status" -> a.status.getOrElse("active").asJson,  // 使用数据库中的实际状态
       "createdAt" -> a.createdAt.map(_.toString).asJson,  // 转换为字符串
       "lastLoginAt" -> a.lastLogin.map(_.toString).asJson,  // 将lastLogin映射为lastLoginAt
       "avatar" -> Option.empty[String].asJson  // 添加avatar字段，当前为空

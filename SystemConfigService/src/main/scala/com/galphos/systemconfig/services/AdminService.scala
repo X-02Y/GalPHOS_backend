@@ -22,15 +22,13 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
   def getAllAdmins: IO[List[Admin]] = {
     val query = sql"""
       SELECT admin_id, username, password_hash, role, 
-             is_super_admin, created_at, updated_at, last_login
-      FROM system_admins
+             (role = 'super_admin') as is_super_admin, status
+      FROM authservice.admin_table
       ORDER BY username
-    """.query[(Long, String, String, String, 
-              Boolean, ZonedDateTime, ZonedDateTime, Option[ZonedDateTime])]
-      .map { case (id, username, passwordHash, role, 
-                   isSuperAdmin, createdAt, updatedAt, lastLogin) =>
+    """.query[(String, String, String, String, Boolean, String)]
+      .map { case (id, username, passwordHash, role, isSuperAdmin, status) =>
         Admin(Some(id), username, Some(passwordHash), role, 
-              isSuperAdmin, Some(createdAt), Some(updatedAt), lastLogin)
+              isSuperAdmin, Some(status), None, None, None)
       }
       .to[List]
       
@@ -41,18 +39,16 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
   }
   
   // 获取单个管理员
-  def getAdmin(adminId: Long): IO[Option[Admin]] = {
+  def getAdmin(adminId: String): IO[Option[Admin]] = {
     val query = sql"""
       SELECT admin_id, username, password_hash, role, 
-             is_super_admin, created_at, updated_at, last_login
-      FROM system_admins
+             (role = 'super_admin') as is_super_admin, status
+      FROM authservice.admin_table
       WHERE admin_id = $adminId
-    """.query[(Long, String, String, String, 
-              Boolean, ZonedDateTime, ZonedDateTime, Option[ZonedDateTime])]
-      .map { case (id, username, passwordHash, role, 
-                   isSuperAdmin, createdAt, updatedAt, lastLogin) =>
+    """.query[(String, String, String, String, Boolean, String)]
+      .map { case (id, username, passwordHash, role, isSuperAdmin, status) =>
         Admin(Some(id), username, Some(passwordHash), role, 
-              isSuperAdmin, Some(createdAt), Some(updatedAt), lastLogin)
+              isSuperAdmin, Some(status), None, None, None)
       }
       .option
       
@@ -67,23 +63,23 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
     // 前端已经进行了密码哈希，不需要再次哈希
     val passwordHash = adminRequest.password
     val now = ZonedDateTime.now()
+    val newAdminId = java.util.UUID.randomUUID().toString
+    val fixedSalt = "GalPHOS_2025_SALT" // 使用固定盐值
     
     // 根据role字段确定是否为超级管理员
-    val isSuperAdmin = adminRequest.role.exists(_.contains("super_admin"))
     val role = adminRequest.role.getOrElse("admin") // 默认为admin角色
     
     val insertQuery = sql"""
-      INSERT INTO system_admins 
-        (username, password_hash, role, is_super_admin, created_at, updated_at)
+      INSERT INTO authservice.admin_table 
+        (admin_id, username, password_hash, salt, role, status, created_at)
       VALUES 
-        (${adminRequest.username}, $passwordHash, $role, 
-         $isSuperAdmin, $now, $now)
-      RETURNING admin_id
-    """.query[Long].unique
+        ($newAdminId, ${adminRequest.username}, $passwordHash, $fixedSalt, $role, 
+         'active', $now)
+    """.update.run
     
     val transaction = for {
-      id <- insertQuery
-      admin <- getAdminFromDb(id)
+      _ <- insertQuery
+      admin <- getAdminFromDb(newAdminId)
     } yield admin
     
     xa.use(transaction.transact(_))
@@ -93,31 +89,31 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
   }
   
   // 从数据库获取管理员（内部使用）
-  private def getAdminFromDb(adminId: Long): ConnectionIO[Option[Admin]] = {
+  private def getAdminFromDb(adminId: String): ConnectionIO[Option[Admin]] = {
     sql"""
       SELECT admin_id, username, password_hash, role, 
-             is_super_admin, created_at, updated_at, last_login
-      FROM system_admins
+             (role = 'super_admin') as is_super_admin, status
+      FROM authservice.admin_table
       WHERE admin_id = $adminId
-    """.query[(Long, String, String, String, 
-              Boolean, ZonedDateTime, ZonedDateTime, Option[ZonedDateTime])]
-      .map { case (id, username, passwordHash, role, 
-                   isSuperAdmin, createdAt, updatedAt, lastLogin) =>
+    """.query[(String, String, String, String, Boolean, String)]
+      .map { case (id, username, passwordHash, role, isSuperAdmin, status) =>
         Admin(Some(id), username, Some(passwordHash), role, 
-              isSuperAdmin, Some(createdAt), Some(updatedAt), lastLogin)
+              isSuperAdmin, Some(status), None, None, None)
       }
       .option
   }
   
   // 更新管理员
-  def updateAdmin(adminId: Long, updateRequest: UpdateAdminRequest): IO[Option[Admin]] = {
+  def updateAdmin(adminId: String, updateRequest: UpdateAdminRequest): IO[Option[Admin]] = {
     val now = ZonedDateTime.now()
     
     // 构建更新片段
     val updateFragments = List(
       updateRequest.role.map(r => fr"role = $r"),
-      updateRequest.isSuperAdmin.map(sa => fr"is_super_admin = $sa"),
-      Some(fr"updated_at = $now")
+      updateRequest.status.map(s => fr"status = $s"),
+      updateRequest.username.map(u => fr"username = $u"),
+      updateRequest.name.map(n => fr"name = $n"),
+      updateRequest.avatarUrl.map(a => fr"avatar_url = $a")
     ).flatten
     
     if (updateFragments.isEmpty) {
@@ -125,7 +121,7 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
     }
     
     val setClause = updateFragments.intercalate(fr", ")
-    val updateQuery = (fr"UPDATE system_admins SET" ++ setClause ++ fr"WHERE admin_id = $adminId").update.run
+    val updateQuery = (fr"UPDATE authservice.admin_table SET" ++ setClause ++ fr"WHERE admin_id = $adminId").update.run
     
     val transaction = for {
       updated <- updateQuery
@@ -139,8 +135,8 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
   }
   
   // 删除管理员
-  def deleteAdmin(adminId: Long): IO[Boolean] = {
-    val deleteQuery = sql"DELETE FROM system_admins WHERE admin_id = $adminId".update.run
+  def deleteAdmin(adminId: String): IO[Boolean] = {
+    val deleteQuery = sql"DELETE FROM authservice.admin_table WHERE admin_id = $adminId".update.run
     
     xa.use(deleteQuery.transact(_))
       .map(_ > 0)
@@ -150,13 +146,14 @@ class AdminService(xa: Resource[IO, Transactor[IO]]) {
   }
   
   // 重置管理员密码
-  def resetPassword(adminId: Long, resetRequest: ResetPasswordRequest): IO[Boolean] = {
-    val passwordHash = BCrypt.hashpw(resetRequest.password, BCrypt.gensalt())
-    val now = ZonedDateTime.now()
+  def resetPassword(adminId: String, resetRequest: ResetPasswordRequest): IO[Boolean] = {
+    val fixedSalt = "GalPHOS_2025_SALT"
+    // 对于重置密码，我们使用 newPassword 字段，前端已经进行了哈希处理
+    val passwordHash = resetRequest.newPassword
     
     val updateQuery = sql"""
-      UPDATE system_admins 
-      SET password_hash = $passwordHash, updated_at = $now
+      UPDATE authservice.admin_table 
+      SET password_hash = $passwordHash, salt = $fixedSalt
       WHERE admin_id = $adminId
     """.update.run
     
