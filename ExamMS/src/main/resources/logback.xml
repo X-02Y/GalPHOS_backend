@@ -1,20 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Console appender -->
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- File appender -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>logs/exam-service.log</file>
+        <file>logs/exam-management-service.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <fileNamePattern>logs/exam-service.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>100MB</maxFileSize>
+            <fileNamePattern>logs/exam-management-service.%d{yyyy-MM-dd}.gz</fileNamePattern>
             <maxHistory>30</maxHistory>
-            <totalSizeCap>3GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
@@ -23,17 +19,24 @@
 
     <!-- Root logger -->
     <root level="INFO">
-        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="STDOUT" />
         <appender-ref ref="FILE" />
     </root>
 
-    <!-- Specific loggers -->
-    <logger name="org.http4s" level="WARN" />
-    <logger name="com.zaxxer.hikari" level="WARN" />
-    <logger name="org.postgresql" level="WARN" />
-    
     <!-- Application loggers -->
-    <logger name="Controllers" level="DEBUG" />
-    <logger name="Services" level="DEBUG" />
+    <logger name="com.galphos" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+
+    <!-- HTTP4S loggers -->
+    <logger name="org.http4s" level="INFO" />
+    
+    <!-- Database loggers -->
+    <logger name="com.zaxxer.hikari" level="INFO" />
     <logger name="Database" level="DEBUG" />
+    
+    <!-- Reduce noise from some libraries -->
+    <logger name="org.eclipse.jetty" level="WARN" />
+    <logger name="org.postgresql" level="WARN" />
 </configuration>

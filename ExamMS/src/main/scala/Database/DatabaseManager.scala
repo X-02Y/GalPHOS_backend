@@ -3,27 +3,30 @@ package Database
 import cats.effect.IO
 import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import Config.DatabaseConfig
-import io.circe.*
-import io.circe.parser.*
 import org.slf4j.LoggerFactory
-import java.sql.{Connection, PreparedStatement, ResultSet, SQLException}
+import java.sql.{Connection, ResultSet}
 import javax.sql.DataSource
-import scala.util.{Try, Using}
-
-case class SqlParameter(dataType: String, value: Any)
 
 object DatabaseManager {
   private val logger = LoggerFactory.getLogger("DatabaseManager")
   private var dataSource: Option[HikariDataSource] = None
 
-  def initialize(config: DatabaseConfig): IO[Unit] = IO {
+  def initializeDataSource(config: DatabaseConfig): IO[Unit] = IO {
+    logger.info("初始化数据库连接池...")
+    
     val hikariConfig = new HikariConfig()
     hikariConfig.setJdbcUrl(config.jdbcUrl)
     hikariConfig.setUsername(config.username)
     hikariConfig.setPassword(config.password)
     hikariConfig.setMaximumPoolSize(config.maximumPoolSize)
-    hikariConfig.addDataSourceProperty("prepStmtCacheSize", config.prepStmtCacheSize)
-    hikariConfig.addDataSourceProperty("prepStmtCacheSqlLimit", config.prepStmtCacheSqlLimit)
+    hikariConfig.setMaxLifetime(config.connectionLiveMinutes * 60 * 1000L)
+    hikariConfig.setConnectionInitSql("SELECT 1")
+    hikariConfig.setDriverClassName("org.postgresql.Driver")
+    
+    // 连接池优化配置
+    hikariConfig.addDataSourceProperty("cachePrepStmts", "true")
+    hikariConfig.addDataSourceProperty("prepStmtCacheSize", config.prepStmtCacheSize.toString)
+    hikariConfig.addDataSourceProperty("prepStmtCacheSqlLimit", config.prepStmtCacheSqlLimit.toString)
     hikariConfig.addDataSourceProperty("useServerPrepStmts", "true")
     hikariConfig.addDataSourceProperty("useLocalSessionState", "true")
     hikariConfig.addDataSourceProperty("rewriteBatchedStatements", "true")
@@ -31,234 +34,124 @@ object DatabaseManager {
     hikariConfig.addDataSourceProperty("cacheServerConfiguration", "true")
     hikariConfig.addDataSourceProperty("elideSetAutoCommits", "true")
     hikariConfig.addDataSourceProperty("maintainTimeStats", "false")
-
-    dataSource = Some(new HikariDataSource(hikariConfig))
-    logger.info("数据库连接池初始化成功")
+    
+    val ds = new HikariDataSource(hikariConfig)
+    dataSource = Some(ds)
+    logger.info("数据库连接池初始化完成")
   }
 
-  def getConnection: IO[Connection] = IO {
-    dataSource.getOrElse(throw new RuntimeException("数据库连接池未初始化")).getConnection
-  }
+  def getDataSource: Option[DataSource] = dataSource
 
-  def close(): IO[Unit] = IO {
-    dataSource.foreach(_.close())
-    dataSource = None
-    logger.info("数据库连接池已关闭")
-  }
-
-  // 执行查询并返回JSON结果列表
-  def executeQuery(sql: String, params: List[SqlParameter] = List.empty): IO[List[Json]] = {
-    getConnection.flatMap { connection =>
-      IO {
+  def withConnection[T](operation: Connection => T): IO[T] = IO {
+    dataSource match {
+      case Some(ds) =>
+        val connection = ds.getConnection()
         try {
-          val statement = connection.prepareStatement(sql)
-          
-          // 设置参数
-          params.zipWithIndex.foreach { case (param, index) =>
-            param.dataType.toLowerCase match {
-              case "string" => statement.setString(index + 1, param.value.toString)
-              case "int" => statement.setInt(index + 1, param.value.toString.toInt)
-              case "long" => statement.setLong(index + 1, param.value.toString.toLong)
-              case "double" => statement.setDouble(index + 1, param.value.toString.toDouble)
-              case "boolean" => statement.setBoolean(index + 1, param.value.toString.toBoolean)
-              case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
-              case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
-              case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
-              case _ => statement.setObject(index + 1, param.value)
-            }
-          }
-          
-          val resultSet = statement.executeQuery()
-          val results = scala.collection.mutable.ListBuffer[Json]()
-          
-          while (resultSet.next()) {
-            val metadata = resultSet.getMetaData
-            val columnCount = metadata.getColumnCount
-            val row = scala.collection.mutable.Map[String, Json]()
-            
-            for (i <- 1 to columnCount) {
-              val columnName = metadata.getColumnName(i)
-              val columnType = metadata.getColumnTypeName(i)
-              val value = resultSet.getObject(i)
-              
-              val jsonValue = if (value == null) {
-                Json.Null
-              } else {
-                columnType.toLowerCase match {
-                  case "varchar" | "text" | "char" => Json.fromString(value.toString)
-                  case "int4" | "integer" => Json.fromInt(value.toString.toInt)
-                  case "int8" | "bigint" => Json.fromLong(value.toString.toLong)
-                  case "numeric" | "decimal" => Json.fromBigDecimal(BigDecimal(value.toString))
-                  case "bool" | "boolean" => Json.fromBoolean(value.toString.toBoolean)
-                  case "timestamp" | "timestamptz" => Json.fromString(value.toString)
-                  case "uuid" => Json.fromString(value.toString)
-                  case "jsonb" | "json" =>
-                    parse(value.toString).getOrElse(Json.fromString(value.toString))
-                  case _ => Json.fromString(value.toString)
-                }
-              }
-              row(columnName) = jsonValue
-            }
-            results += Json.fromFields(row.toSeq)
-          }
-          
-          resultSet.close()
-          statement.close()
+          operation(connection)
+        } finally {
           connection.close()
-          
-          results.toList
-        } catch {
-          case e: Exception =>
-            connection.close()
-            logger.error("数据库查询错误", e)
-            throw e
         }
-      }
+      case None =>
+        throw new RuntimeException("数据库连接池未初始化")
     }
   }
 
-  // 执行更新操作（INSERT、UPDATE、DELETE）
-  def executeUpdate(sql: String, params: List[SqlParameter] = List.empty): IO[Int] = {
-    getConnection.flatMap { connection =>
-      IO {
-        try {
-          val statement = connection.prepareStatement(sql)
-          
-          // 设置参数
-          params.zipWithIndex.foreach { case (param, index) =>
-            param.dataType.toLowerCase match {
-              case "string" => statement.setString(index + 1, param.value.toString)
-              case "int" => statement.setInt(index + 1, param.value.toString.toInt)
-              case "long" => statement.setLong(index + 1, param.value.toString.toLong)
-              case "double" => statement.setDouble(index + 1, param.value.toString.toDouble)
-              case "boolean" => statement.setBoolean(index + 1, param.value.toString.toBoolean)
-              case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
-              case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
-              case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
-              case "jsonb" | "json" => 
-                val jsonString = param.value.toString
-                val pgObject = new org.postgresql.util.PGobject()
-                pgObject.setType("jsonb")
-                pgObject.setValue(jsonString)
-                statement.setObject(index + 1, pgObject)
-              case _ => statement.setObject(index + 1, param.value)
-            }
-          }
-          
-          val rowsAffected = statement.executeUpdate()
-          
-          statement.close()
-          connection.close()
-          
-          rowsAffected
-        } catch {
-          case e: Exception =>
-            connection.close()
-            logger.error("数据库更新错误", e)
-            throw e
-        }
-      }
-    }
-  }
-
-  // 执行插入操作并返回生成的主键
-  def executeInsertWithGeneratedKey(sql: String, params: List[SqlParameter] = List.empty): IO[Option[String]] = {
-    getConnection.flatMap { connection =>
-      IO {
-        try {
-          val statement = connection.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS)
-          
-          // 设置参数
-          params.zipWithIndex.foreach { case (param, index) =>
-            param.dataType.toLowerCase match {
-              case "string" => statement.setString(index + 1, param.value.toString)
-              case "int" => statement.setInt(index + 1, param.value.toString.toInt)
-              case "long" => statement.setLong(index + 1, param.value.toString.toLong)
-              case "double" => statement.setDouble(index + 1, param.value.toString.toDouble)
-              case "boolean" => statement.setBoolean(index + 1, param.value.toString.toBoolean)
-              case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
-              case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
-              case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
-              case "jsonb" | "json" => 
-                val jsonString = param.value.toString
-                val pgObject = new org.postgresql.util.PGobject()
-                pgObject.setType("jsonb")
-                pgObject.setValue(jsonString)
-                statement.setObject(index + 1, pgObject)
-              case _ => statement.setObject(index + 1, param.value)
-            }
-          }
-          
-          statement.executeUpdate()
-          val generatedKeys = statement.getGeneratedKeys()
-          val result = if (generatedKeys.next()) {
-            Some(generatedKeys.getString(1))
-          } else {
-            None
-          }
-          
-          generatedKeys.close()
-          statement.close()
-          connection.close()
-          
-          result
-        } catch {
-          case e: Exception =>
-            connection.close()
-            logger.error("数据库插入错误", e)
-            throw e
-        }
-      }
-    }
-  }
-
-  // 执行事务
-  def executeTransaction(operations: List[(String, List[SqlParameter])]): IO[Boolean] = {
-    getConnection.flatMap { connection =>
-      IO {
+  def withTransaction[T](operation: Connection => T): IO[T] = IO {
+    dataSource match {
+      case Some(ds) =>
+        val connection = ds.getConnection()
         try {
           connection.setAutoCommit(false)
-          
-          operations.foreach { case (sql, params) =>
-            val statement = connection.prepareStatement(sql)
-            
-            params.zipWithIndex.foreach { case (param, index) =>
-              param.dataType.toLowerCase match {
-                case "string" => statement.setString(index + 1, param.value.toString)
-                case "int" => statement.setInt(index + 1, param.value.toString.toInt)
-                case "long" => statement.setLong(index + 1, param.value.toString.toLong)
-                case "double" => statement.setDouble(index + 1, param.value.toString.toDouble)
-                case "boolean" => statement.setBoolean(index + 1, param.value.toString.toBoolean)
-                case "uuid" => statement.setObject(index + 1, java.util.UUID.fromString(param.value.toString))
-                case "timestamp" => statement.setTimestamp(index + 1, java.sql.Timestamp.valueOf(param.value.toString))
-                case "bigdecimal" => statement.setBigDecimal(index + 1, new java.math.BigDecimal(param.value.toString))
-                case "jsonb" | "json" => 
-                  val jsonString = param.value.toString
-                  val pgObject = new org.postgresql.util.PGobject()
-                  pgObject.setType("jsonb")
-                  pgObject.setValue(jsonString)
-                  statement.setObject(index + 1, pgObject)
-                case _ => statement.setObject(index + 1, param.value)
-              }
-            }
-            
-            statement.executeUpdate()
-            statement.close()
-          }
-          
+          val result = operation(connection)
           connection.commit()
+          result
+        } catch {
+          case ex: Exception =>
+            connection.rollback()
+            throw ex
+        } finally {
           connection.setAutoCommit(true)
           connection.close()
-          
-          true
-        } catch {
-          case e: Exception =>
-            connection.rollback()
-            connection.setAutoCommit(true)
-            connection.close()
-            logger.error("数据库事务错误", e)
-            false
         }
+      case None =>
+        throw new RuntimeException("数据库连接池未初始化")
+    }
+  }
+
+  def shutdown(): IO[Unit] = IO {
+    dataSource.foreach { ds =>
+      logger.info("关闭数据库连接池...")
+      ds.close()
+      logger.info("数据库连接池已关闭")
+    }
+    dataSource = None
+  }
+}
+
+// 数据库操作工具类
+object DatabaseUtils {
+  def executeQuery[T](sql: String, params: List[Any] = List.empty)(parser: ResultSet => T): IO[List[T]] = {
+    DatabaseManager.withConnection { connection =>
+      val statement = connection.prepareStatement(sql)
+      try {
+        // 设置参数
+        params.zipWithIndex.foreach { case (param, index) =>
+          statement.setObject(index + 1, param)
+        }
+        
+        val resultSet = statement.executeQuery()
+        val results = scala.collection.mutable.ListBuffer[T]()
+        
+        while (resultSet.next()) {
+          results += parser(resultSet)
+        }
+        
+        results.toList
+      } finally {
+        statement.close()
+      }
+    }
+  }
+
+  def executeUpdate(sql: String, params: List[Any] = List.empty): IO[Int] = {
+    DatabaseManager.withConnection { connection =>
+      val statement = connection.prepareStatement(sql)
+      try {
+        // 设置参数
+        params.zipWithIndex.foreach { case (param, index) =>
+          statement.setObject(index + 1, param)
+        }
+        
+        statement.executeUpdate()
+      } finally {
+        statement.close()
+      }
+    }
+  }
+
+  def executeQuerySingle[T](sql: String, params: List[Any] = List.empty)(parser: ResultSet => T): IO[Option[T]] = {
+    executeQuery(sql, params)(parser).map(_.headOption)
+  }
+
+  def executeInsertWithId(sql: String, params: List[Any] = List.empty): IO[String] = {
+    DatabaseManager.withConnection { connection =>
+      val statement = connection.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS)
+      try {
+        // 设置参数
+        params.zipWithIndex.foreach { case (param, index) =>
+          statement.setObject(index + 1, param)
+        }
+        
+        statement.executeUpdate()
+        
+        val keys = statement.getGeneratedKeys()
+        if (keys.next()) {
+          keys.getString(1)
+        } else {
+          throw new RuntimeException("Failed to get generated key")
+        }
+      } finally {
+        statement.close()
       }
     }
   }
