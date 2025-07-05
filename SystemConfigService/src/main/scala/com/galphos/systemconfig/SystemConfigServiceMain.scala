@@ -4,8 +4,8 @@ import cats.effect.{ExitCode, IO, IOApp, Resource}
 import cats.syntax.all._
 import com.galphos.systemconfig.config.AppConfig
 import com.galphos.systemconfig.db.DatabaseConfig
-import com.galphos.systemconfig.routes.{AdminRoutes, HealthRoutes, SettingsRoutes, VersionRoutes}
-import com.galphos.systemconfig.services.{AdminProxyService, AuthService, SettingsService, VersionService}
+import com.galphos.systemconfig.routes.{AdminRoutes, HealthRoutes, SettingsRoutes, VersionRoutes, UserRoutes, UnifiedDataRoutes}
+import com.galphos.systemconfig.services.{AdminProxyService, UserProxyService, UnifiedDataProxyService, AuthService, SettingsService, VersionService}
 import doobie.hikari.HikariTransactor
 import doobie.util.transactor.Transactor
 import fs2.io.net.Network
@@ -42,20 +42,24 @@ object SystemConfigServiceMain extends IOApp {
           // 初始化服务
           versionService = new VersionService(Resource.pure[IO, Transactor[IO]](transactor))
           adminProxyService = new AdminProxyService(config.userManagementServiceUrl)
+          userProxyService = new UserProxyService(config.userManagementServiceUrl)
+          unifiedDataProxyService = new UnifiedDataProxyService(adminProxyService, userProxyService)
           settingsService = new SettingsService(Resource.pure[IO, Transactor[IO]](transactor))
           authService = new AuthService(config)
           
           // 移除启动时的认证服务检查，避免干扰正常的管理员会话
-          _ <- logger.info("使用管理员代理服务，所有管理员操作将代理到UserManagementService")
+          _ <- logger.info("使用代理服务模式，所有用户和管理员操作将代理到UserManagementService")
           
           // 初始化路由
           adminRoutes = new AdminRoutes(adminProxyService, authService)
+          userRoutes = new UserRoutes(userProxyService, authService)
+          unifiedDataRoutes = new UnifiedDataRoutes(unifiedDataProxyService, authService)
           settingsRoutes = new SettingsRoutes(settingsService, authService)
           versionRoutes = new VersionRoutes(versionService)
           healthRoutes = new HealthRoutes()
           
           // 组合所有API路由
-          apiRoutes = adminRoutes.routes <+> settingsRoutes.routes <+> versionRoutes.routes
+          apiRoutes = adminRoutes.routes <+> userRoutes.routes <+> unifiedDataRoutes.routes <+> settingsRoutes.routes <+> versionRoutes.routes
           
           // 创建完整路由
           httpApp = Router(

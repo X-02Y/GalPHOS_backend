@@ -57,6 +57,97 @@ case class ResetPasswordRequest(
   password: String
 )
 
+// 用户模型
+case class User(
+  userId: Option[String],
+  username: String,
+  phone: Option[String],
+  role: String, // student, coach, grader
+  status: String, // pending, active, disabled
+  province: Option[String],
+  school: Option[String],
+  avatarUrl: Option[String],
+  createdAt: Option[ZonedDateTime],
+  updatedAt: Option[ZonedDateTime],
+  lastLogin: Option[ZonedDateTime]
+)
+
+// 用户响应模型
+case class UserResponse(
+  userId: Option[String],
+  username: String,
+  phone: Option[String],
+  role: String,
+  status: String,
+  province: Option[String],
+  school: Option[String],
+  avatarUrl: Option[String],
+  createdAt: Option[ZonedDateTime],
+  updatedAt: Option[ZonedDateTime],
+  lastLogin: Option[ZonedDateTime]
+)
+
+// 创建用户请求
+case class CreateUserRequest(
+  username: String,
+  phone: Option[String],
+  role: String,
+  province: Option[String] = None,
+  school: Option[String] = None
+)
+
+// 更新用户请求
+case class UpdateUserRequest(
+  phone: Option[String] = None,
+  role: Option[String] = None,
+  status: Option[String] = None,
+  province: Option[String] = None,
+  school: Option[String] = None,
+  avatarUrl: Option[String] = None
+)
+
+// 用户审核请求
+case class UserApprovalRequest(
+  userId: String,
+  action: String, // approve, reject
+  reason: Option[String] = None
+)
+
+// 所有用户响应模型
+case class AllUsersResponse(
+  users: List[User],
+  admins: List[Admin],
+  totalUsers: Int,
+  totalAdmins: Int,
+  total: Int
+)
+
+// 统计响应模型
+case class StatisticsResponse(
+  totalUsers: Int,
+  totalAdmins: Int,
+  totalAll: Int,
+  pendingUsers: Int,
+  usersByRole: UsersByRoleResponse,
+  lastUpdated: String
+)
+
+case class UsersByRoleResponse(
+  student: Int,
+  coach: Int,
+  grader: Int,
+  admin: Int,
+  super_admin: Int
+)
+
+// 服务信息响应模型
+case class ServiceInfoResponse(
+  service: String,
+  version: String,
+  description: String,
+  endpoints: List[String]
+)
+
 // 系统版本模型
 case class SystemVersion(
   id: Option[Long],
@@ -67,12 +158,27 @@ case class SystemVersion(
   isCurrent: Boolean
 )
 
-// 错误响应模型
+// 标准API响应格式
+case class ApiResponse[T](
+  success: Boolean,
+  data: Option[T] = None,
+  message: Option[String] = None
+)
+
+object ApiResponse {
+  def success[T](data: T, message: String = "操作成功"): ApiResponse[T] =
+    ApiResponse(success = true, data = Some(data), message = Some(message))
+
+  def error(message: String): ApiResponse[String] =
+    ApiResponse(success = false, message = Some(message))
+}
+
+// 错误响应模型（向后兼容）
 case class ErrorResponse(
   error: String
 )
 
-// 成功响应模型
+// 成功响应模型（向后兼容）
 case class SuccessResponse(
   message: String
 )
@@ -88,17 +194,16 @@ object Models {
   implicit val systemConfigDecoder: Decoder[SystemConfig] = deriveDecoder[SystemConfig]
   
   implicit val adminEncoder: Encoder[Admin] = (a: Admin) => {
-    // 创建AdminResponse，排除passwordHash字段
-    val response = AdminResponse(
-      adminId = a.adminId,
-      username = a.username,
-      role = a.role,
-      isSuperAdmin = a.isSuperAdmin,
-      createdAt = a.createdAt,
-      updatedAt = a.updatedAt,
-      lastLogin = a.lastLogin
+    // 创建与前端AdminUser接口兼容的JSON格式
+    io.circe.Json.obj(
+      "id" -> a.adminId.map(_.toString).getOrElse("").asJson,  // 将adminId转换为字符串id
+      "username" -> a.username.asJson,
+      "role" -> a.role.asJson,
+      "status" -> "active".asJson,  // 添加前端期望的status字段，默认为active
+      "createdAt" -> a.createdAt.map(_.toString).asJson,  // 转换为字符串
+      "lastLoginAt" -> a.lastLogin.map(_.toString).asJson,  // 将lastLogin映射为lastLoginAt
+      "avatar" -> Option.empty[String].asJson  // 添加avatar字段，当前为空
     )
-    response.asJson
   }
   
   implicit val adminDecoder: Decoder[Admin] = deriveDecoder[Admin]
@@ -114,8 +219,56 @@ object Models {
   implicit val resetPasswordRequestEncoder: Encoder[ResetPasswordRequest] = deriveEncoder[ResetPasswordRequest]
   implicit val resetPasswordRequestDecoder: Decoder[ResetPasswordRequest] = deriveDecoder[ResetPasswordRequest]
   
+  // 用户模型编解码器
+  implicit val userEncoder: Encoder[User] = (u: User) => {
+    // 创建UserResponse，确保数据结构一致
+    val response = UserResponse(
+      userId = u.userId,
+      username = u.username,
+      phone = u.phone,
+      role = u.role,
+      status = u.status,
+      province = u.province,
+      school = u.school,
+      avatarUrl = u.avatarUrl,
+      createdAt = u.createdAt,
+      updatedAt = u.updatedAt,
+      lastLogin = u.lastLogin
+    )
+    response.asJson
+  }
+  
+  implicit val userDecoder: Decoder[User] = deriveDecoder[User]
+  implicit val userResponseEncoder: Encoder[UserResponse] = deriveEncoder[UserResponse]
+  implicit val userResponseDecoder: Decoder[UserResponse] = deriveDecoder[UserResponse]
+  
+  implicit val createUserRequestEncoder: Encoder[CreateUserRequest] = deriveEncoder[CreateUserRequest]
+  implicit val createUserRequestDecoder: Decoder[CreateUserRequest] = deriveDecoder[CreateUserRequest]
+  
+  implicit val updateUserRequestEncoder: Encoder[UpdateUserRequest] = deriveEncoder[UpdateUserRequest]
+  implicit val updateUserRequestDecoder: Decoder[UpdateUserRequest] = deriveDecoder[UpdateUserRequest]
+  
+  implicit val userApprovalRequestEncoder: Encoder[UserApprovalRequest] = deriveEncoder[UserApprovalRequest]
+  implicit val userApprovalRequestDecoder: Decoder[UserApprovalRequest] = deriveDecoder[UserApprovalRequest]
+  
+  implicit val allUsersResponseEncoder: Encoder[AllUsersResponse] = deriveEncoder[AllUsersResponse]
+  implicit val allUsersResponseDecoder: Decoder[AllUsersResponse] = deriveDecoder[AllUsersResponse]
+  
+  implicit val usersByRoleResponseEncoder: Encoder[UsersByRoleResponse] = deriveEncoder[UsersByRoleResponse]
+  implicit val usersByRoleResponseDecoder: Decoder[UsersByRoleResponse] = deriveDecoder[UsersByRoleResponse]
+  
+  implicit val statisticsResponseEncoder: Encoder[StatisticsResponse] = deriveEncoder[StatisticsResponse]
+  implicit val statisticsResponseDecoder: Decoder[StatisticsResponse] = deriveDecoder[StatisticsResponse]
+  
+  implicit val serviceInfoResponseEncoder: Encoder[ServiceInfoResponse] = deriveEncoder[ServiceInfoResponse]
+  implicit val serviceInfoResponseDecoder: Decoder[ServiceInfoResponse] = deriveDecoder[ServiceInfoResponse]
+  
   implicit val systemVersionEncoder: Encoder[SystemVersion] = deriveEncoder[SystemVersion]
   implicit val systemVersionDecoder: Decoder[SystemVersion] = deriveDecoder[SystemVersion]
+  
+  // ApiResponse 编解码器
+  implicit def apiResponseEncoder[T](implicit encoder: Encoder[T]): Encoder[ApiResponse[T]] = deriveEncoder[ApiResponse[T]]
+  implicit def apiResponseDecoder[T](implicit decoder: Decoder[T]): Decoder[ApiResponse[T]] = deriveDecoder[ApiResponse[T]]
   
   implicit val errorResponseEncoder: Encoder[ErrorResponse] = deriveEncoder[ErrorResponse]
   implicit val errorResponseDecoder: Decoder[ErrorResponse] = deriveDecoder[ErrorResponse]

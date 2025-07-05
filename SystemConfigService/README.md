@@ -26,11 +26,27 @@
 ## 功能概述
 
 - **超级管理员专用功能**：管理其他管理员账号，包括创建、编辑、删除及密码重置
+- **统一用户管理**：通过代理服务访问和管理所有用户数据（学生、教练、阅卷员）
+- **统一数据访问**：提供一致的API接口访问用户和管理员数据
+- **数据聚合与统计**：提供跨用户类型的数据统计和搜索功能
 - **系统基础配置**：系统名称、默认设置、全局参数等基础信息管理
 - **系统信息展示**：系统版本号、构建信息、技术栈和依赖组件信息
 - **配置权限分离**：管理员专用设置与公共设置严格分离
 - **版本控制**：系统版本信息维护和更新历史追踪
 - **配置实时更新**：关键配置变更后实时生效无需重启服务
+
+## 架构特性
+
+### 统一数据管理
+- **代理模式**：通过AdminProxyService和UserProxyService代理到UserManagementService
+- **统一存储**：所有用户和管理员数据存储在同一数据库的不同表中
+- **一致访问**：提供统一的API接口访问所有类型的用户数据
+- **数据聚合**：通过UnifiedDataProxyService提供跨类型的数据查询和统计
+
+### 服务分离
+- **业务逻辑分离**：系统配置与用户管理逻辑完全分离
+- **数据访问分离**：通过HTTP代理访问，避免直接数据库依赖
+- **权限控制分离**：独立的认证和授权机制
 
 ## 技术栈
 
@@ -49,6 +65,22 @@
 - `/api/admin/system/admins` - 管理员列表和创建 (GET, POST)
 - `/api/admin/system/admins/{adminId}` - 单个管理员操作（编辑/删除）(GET, PUT, DELETE)
 - `/api/admin/system/admins/{adminId}/password` - 管理员密码重置 (POST)
+
+### 用户管理（管理员专用）
+
+- `/api/admin/users/pending` - 获取待审核用户 (GET)
+- `/api/admin/users/approved` - 获取已审核用户 (GET)
+- `/api/admin/users/{userId}` - 单个用户操作（查看/编辑/删除）(GET, PUT, DELETE)
+- `/api/admin/users/approve` - 审核用户申请 (POST)
+- `/api/admin/users/{userId}/status` - 更新用户状态 (PUT)
+
+### 统一数据访问（管理员专用）
+
+- `/api/admin/data/users/all` - 获取所有用户（包括管理员）(GET)
+- `/api/admin/data/users/by-role/{role}` - 按角色获取用户 (GET)
+- `/api/admin/data/users/by-status/{status}` - 按状态获取用户 (GET)
+- `/api/admin/data/users/search` - 搜索用户 (GET)
+- `/api/admin/data/statistics` - 获取数据统计 (GET)
 
 ### 系统基础配置
 

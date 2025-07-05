@@ -2,6 +2,7 @@ package com.galphos.systemconfig.services
 
 import cats.effect.IO
 import cats.implicits._
+import com.galphos.systemconfig.models.{Admin, CreateAdminRequest, UpdateAdminRequest, ResetPasswordRequest}
 import com.galphos.systemconfig.models.Models._
 import io.circe._
 import io.circe.parser._
@@ -60,11 +61,13 @@ class AdminProxyService(userManagementServiceUrl: String) {
 
   // 创建管理员
   def createAdmin(adminRequest: CreateAdminRequest, token: String): IO[Option[Admin]] = {
-    val requestBody = Map(
-      "username" -> adminRequest.username,
-      "password" -> adminRequest.password,
-      "role" -> adminRequest.role.getOrElse("admin")
-    ).asJson.noSpaces
+    val requestBody = Json.obj(
+      "username" -> Json.fromString(adminRequest.username),
+      "password" -> Json.fromString(adminRequest.password),
+      "role" -> Json.fromString(adminRequest.role.getOrElse("admin")),
+      "name" -> Json.Null, // 明确设置为null
+      "avatarUrl" -> Json.Null // 明确设置为null
+    ).noSpaces
 
     val request = HttpRequest.newBuilder()
       .uri(URI.create(s"$userManagementServiceUrl/api/admin/system/admins"))
@@ -73,33 +76,52 @@ class AdminProxyService(userManagementServiceUrl: String) {
       .POST(HttpRequest.BodyPublishers.ofString(requestBody))
       .build()
 
-    IO.blocking {
-      val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-      if (response.statusCode() == 200 || response.statusCode() == 201) {
-        parse(response.body()) match {
-          case Right(json) =>
-            val cursor = json.hcursor
-            cursor.downField("success").as[Boolean] match {
-              case Right(true) =>
-                cursor.downField("data").as[Json].toOption.flatMap(convertToAdmin)
-              case _ => None
+    for {
+      _ <- logger.info(s"创建管理员请求: URL=${userManagementServiceUrl}/api/admin/system/admins, 请求体=$requestBody")
+      result <- IO.blocking {
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val statusCode = response.statusCode()
+        val responseBody = response.body()
+        
+        (statusCode, responseBody)
+      }.flatMap { case (statusCode, responseBody) =>
+        logger.info(s"创建管理员响应: 状态码=$statusCode, 响应体=$responseBody") *>
+        IO {
+          if (statusCode == 200 || statusCode == 201) {
+            parse(responseBody) match {
+              case Right(json) =>
+                val cursor = json.hcursor
+                cursor.downField("success").as[Boolean] match {
+                  case Right(true) =>
+                    cursor.downField("data").as[Json].toOption.flatMap(convertToAdmin)
+                  case _ => 
+                    None
+                }
+              case Left(parseError) => 
+                None
             }
-          case Left(_) => None
+          } else {
+            None
+          }
         }
-      } else {
-        None
       }
-    }.handleErrorWith { error =>
-      logger.error(error)(s"创建管理员失败: ${adminRequest.username}") *> IO.pure(None)
-    }
+      _ <- result match {
+        case Some(admin) => 
+          logger.info(s"创建管理员成功: ${admin.username}")
+        case None => 
+          logger.error(s"创建管理员失败: ${adminRequest.username}")
+      }
+    } yield result
+  }.handleErrorWith { error =>
+    logger.error(error)(s"创建管理员失败: ${adminRequest.username}") *> IO.pure(None)
   }
 
   // 更新管理员
   def updateAdmin(adminId: Long, updateRequest: UpdateAdminRequest, token: String): IO[Option[Admin]] = {
-    val requestBody = Map(
-      "role" -> updateRequest.role,
-      "status" -> (if (updateRequest.isSuperAdmin.getOrElse(false)) "active" else "active")
-    ).filter(_._2.isDefined).mapValues(_.get).asJson.noSpaces
+    val requestBody = Json.obj(
+      "role" -> updateRequest.role.map(Json.fromString).getOrElse(Json.Null),
+      "status" -> Json.fromString(if (updateRequest.isSuperAdmin.getOrElse(false)) "active" else "active")
+    ).noSpaces
 
     val request = HttpRequest.newBuilder()
       .uri(URI.create(s"$userManagementServiceUrl/api/admin/system/admins/$adminId"))
@@ -148,9 +170,9 @@ class AdminProxyService(userManagementServiceUrl: String) {
 
   // 重置管理员密码
   def resetPassword(adminId: Long, resetRequest: ResetPasswordRequest, token: String): IO[Boolean] = {
-    val requestBody = Map(
-      "password" -> resetRequest.password
-    ).asJson.noSpaces
+    val requestBody = Json.obj(
+      "password" -> Json.fromString(resetRequest.password)
+    ).noSpaces
 
     val request = HttpRequest.newBuilder()
       .uri(URI.create(s"$userManagementServiceUrl/api/admin/system/admins/$adminId/password"))
@@ -167,29 +189,31 @@ class AdminProxyService(userManagementServiceUrl: String) {
     }
   }
 
-  // 将 UserManagementService 的管理员数据转换为 SystemConfigService 的 Admin 模型
+  // 将 UserManagementService 的管理员数据转换为前端期望的格式
   private def convertToAdmin(json: Json): Option[Admin] = {
     val cursor = json.hcursor
     for {
-      id <- cursor.downField("id").as[String].toOption.flatMap(s => scala.util.Try(s.toLong).toOption)
+      idStr <- cursor.downField("id").as[String].toOption
       username <- cursor.downField("username").as[String].toOption
-      role <- cursor.downField("role").as[String].toOption
-      status <- cursor.downField("status").as[String].toOption
+      role <- cursor.downField("role").as[String].toOption.orElse(Some("admin"))
+      status <- cursor.downField("status").as[String].toOption.orElse(Some("active"))
     } yield {
-      val isSuperAdmin = role.contains("super_admin")
+      // 将UUID字符串直接作为ID使用，前端期望字符串格式
       val createdAt = cursor.downField("createdAt").as[String].toOption
-        .flatMap(s => scala.util.Try(java.time.ZonedDateTime.parse(s)).toOption)
+        .flatMap(s => if (s.nonEmpty && s != "null") scala.util.Try(java.time.ZonedDateTime.parse(s)).toOption else None)
       val lastLogin = cursor.downField("lastLoginAt").as[String].toOption
-        .flatMap(s => scala.util.Try(java.time.ZonedDateTime.parse(s)).toOption)
+        .flatMap(s => if (s.nonEmpty && s != "null") scala.util.Try(java.time.ZonedDateTime.parse(s)).toOption else None)
+      val avatar = cursor.downField("avatar").as[String].toOption
+        .orElse(cursor.downField("avatarUrl").as[String].toOption)
       
       Admin(
-        adminId = Some(id),
+        adminId = Some(idStr.hashCode.toLong.abs), // 保持兼容性，但前端主要使用字符串ID
         username = username,
-        passwordHash = None, // 不需要密码哈希
+        passwordHash = None,
         role = role,
-        isSuperAdmin = isSuperAdmin,
+        isSuperAdmin = role.contains("super_admin"),
         createdAt = createdAt,
-        updatedAt = createdAt, // 使用相同的时间
+        updatedAt = createdAt,
         lastLogin = lastLogin
       )
     }

@@ -32,6 +32,7 @@ trait UserManagementService {
   
   // 系统管理员管理相关方法
   def getSystemAdmins(): IO[List[AdminProfile]]
+  def getSystemAdminById(adminId: String): IO[Option[AdminProfile]]
   def createSystemAdmin(request: CreateSystemAdminRequest): IO[String]
   def updateSystemAdmin(adminId: String, request: UpdateSystemAdminRequest): IO[Unit]
   def deleteSystemAdmin(adminId: String): IO[Unit]
@@ -760,8 +761,37 @@ class UserManagementServiceImpl() extends UserManagementService {
     """.stripMargin
 
     for {
-      results <- DatabaseManager.executeQuery(sql, List.empty)
-    } yield results.map(convertToAdminProfile)
+      _ <- IO(logger.info("开始查询管理员列表"))
+      results <- DatabaseManager.executeQuery(sql, List.empty).handleErrorWith { error =>
+        logger.error(s"查询管理员列表失败: ${error.getMessage}", error)
+        IO.raiseError(error)
+      }
+      _ <- IO(logger.info(s"查询到 ${results.length} 条管理员记录"))
+      _ <- IO(results.headOption.foreach(json => logger.info(s"第一条管理员记录: $json")))
+      adminProfiles = results.map(convertToAdminProfile)
+      _ <- IO(logger.info(s"转换后的管理员数量: ${adminProfiles.length}"))
+      _ <- IO(adminProfiles.headOption.foreach(profile => logger.info(s"第一个管理员资料: $profile")))
+    } yield adminProfiles
+  }
+
+  def getSystemAdminById(adminId: String): IO[Option[AdminProfile]] = {
+    val sql = s"""
+      SELECT 
+        admin_id as id,
+        username,
+        status,
+        role,
+        name,
+        avatar_url,
+        created_at as createdAt,
+        last_login_at as lastLoginAt
+      FROM authservice.admin_table
+      WHERE admin_id = ?
+    """.stripMargin
+
+    for {
+      results <- DatabaseManager.executeQuery(sql, List(SqlParameter("String", adminId)))
+    } yield results.headOption.map(convertToAdminProfile)
   }
 
   override def createSystemAdmin(request: CreateSystemAdminRequest): IO[String] = {
@@ -804,8 +834,8 @@ class UserManagementServiceImpl() extends UserManagementService {
       // 插入新管理员
       sql = """
         INSERT INTO authservice.admin_table (
-          admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          admin_id, username, password_hash, salt, role, status, name, avatar_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, CURRENT_TIMESTAMP)
       """.stripMargin
       
       params = List(
@@ -1041,6 +1071,20 @@ class UserManagementServiceImpl() extends UserManagementService {
         (None, None)
     }
     
+    // 处理角色字段：确保符合前端期望的格式
+    val roleValue = DatabaseManager.decodeFieldOptional[String](json, "role").getOrElse("admin")
+    val normalizedRole = roleValue match {
+      case "super_admin" => "super_admin"
+      case _ => "admin"
+    }
+    
+    // 处理状态字段：确保符合前端期望的格式
+    val statusValue = DatabaseManager.decodeFieldOptional[String](json, "status").getOrElse("active")
+    val normalizedStatus = statusValue.toLowerCase match {
+      case "disabled" => "disabled"
+      case _ => "active"
+    }
+    
     AdminProfile(
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
       username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
@@ -1048,8 +1092,8 @@ class UserManagementServiceImpl() extends UserManagementService {
       lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString),
       avatarUrl = finalAvatarUrl,
       avatar = finalAvatar,
-      status = DatabaseManager.decodeFieldOptional[String](json, "status"),
-      role = DatabaseManager.decodeFieldOptional[String](json, "role")
+      status = Some(normalizedStatus),
+      role = Some(normalizedRole)
     )
   }
 

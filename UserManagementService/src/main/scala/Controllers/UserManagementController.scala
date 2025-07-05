@@ -737,8 +737,12 @@ class UserManagementController(
 
   private def handleGetSystemAdmins(): IO[Response[IO]] = {
     for {
+      _ <- IO(logger.info("Controller: 开始获取管理员列表"))
       admins <- userManagementService.getSystemAdmins()
+      _ <- IO(logger.info(s"Controller: 获取到 ${admins.length} 个管理员"))
+      _ <- IO(admins.headOption.foreach(admin => logger.info(s"Controller: 第一个管理员: $admin")))
       response <- Ok(ApiResponse.success(admins, "获取管理员列表成功").asJson)
+      _ <- IO(logger.info("Controller: API响应构建成功"))
     } yield response
   }.handleErrorWith { error =>
     logger.error("获取管理员列表失败", error)
@@ -751,7 +755,20 @@ class UserManagementController(
       _ = logger.info(s"接收到创建管理员请求: username=${createReq.username}, role=${createReq.role}")
       _ = logger.info(s"请求详情: password长度=${createReq.password.length}, name=${createReq.name}")
       adminId <- userManagementService.createSystemAdmin(createReq)
-      response <- Ok(ApiResponse.success(Map("adminId" -> adminId), "创建管理员成功").asJson)
+      // 获取完整的管理员信息
+      adminProfile <- userManagementService.getSystemAdminById(adminId)
+      adminData = adminProfile match {
+        case Some(profile) => Map(
+          "id" -> profile.id,
+          "username" -> profile.username,
+          "role" -> profile.role.getOrElse("admin"),
+          "status" -> profile.status.getOrElse("active"),
+          "createdAt" -> profile.createdAt.getOrElse(""),
+          "lastLoginAt" -> profile.lastLoginAt.getOrElse("")
+        )
+        case None => Map("adminId" -> adminId)
+      }
+      response <- Ok(ApiResponse.success(adminData, "创建管理员成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("创建管理员失败", error)
