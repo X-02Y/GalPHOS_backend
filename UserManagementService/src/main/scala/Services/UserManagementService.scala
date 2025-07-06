@@ -16,6 +16,7 @@ trait UserManagementService {
   def updateUserStatus(request: UserStatusUpdateRequest): IO[Unit]
   def deleteUser(userId: String): IO[Unit]
   def getUserById(userId: String): IO[Option[ApprovedUser]]
+  def getUserByUsername(username: String): IO[Option[User]]
   def updateUserById(userId: String, request: UpdateUserRequest): IO[Unit]
   def getUsersByRole(role: UserRole, status: Option[UserStatus] = None): IO[List[ApprovedUser]]
   // 新增：获取学生注册申请（只包含有教练关联的）
@@ -283,6 +284,50 @@ class UserManagementServiceImpl() extends UserManagementService {
         case None => IO.pure(None)
       }
     } yield userOpt
+  }
+
+  override def getUserByUsername(username: String): IO[Option[User]] = {
+    val sql = s"""
+      SELECT 
+        u.user_id,
+        u.username,
+        u.password_hash,
+        u.salt,
+        u.role,
+        u.status,
+        u.phone,
+        u.province_id,
+        u.school_id,
+        u.avatar_url,
+        u.created_at,
+        u.updated_at
+      FROM authservice.user_table u
+      WHERE u.username = ?
+    """.stripMargin
+
+    val params = List(SqlParameter("String", username))
+
+    for {
+      result <- DatabaseManager.executeQueryOptional(sql, params)
+      userOpt = result.map(convertToUser)
+    } yield userOpt
+  }
+
+  private def convertToUser(json: io.circe.Json): User = {
+    User(
+      userID = DatabaseManager.decodeFieldUnsafe[String](json, "user_id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      passwordHash = DatabaseManager.decodeFieldUnsafe[String](json, "password_hash"),
+      salt = DatabaseManager.decodeFieldUnsafe[String](json, "salt"),
+      role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
+      status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
+      phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+      provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id"),
+      schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id"),
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatar_url"),
+      createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "created_at"),
+      updatedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "updated_at")
+    )
   }
 
   override def getUsersByRole(role: UserRole, status: Option[UserStatus] = None): IO[List[ApprovedUser]] = {

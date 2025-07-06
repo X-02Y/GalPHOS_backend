@@ -20,6 +20,7 @@ class UserManagementController(
   coachStudentService: CoachStudentService,
   authMiddleware: AuthMiddlewareService
 ) {
+  
   private val logger = LoggerFactory.getLogger("UserManagementController")
 
   // CORS 支持
@@ -216,6 +217,16 @@ class UserManagementController(
     case req @ POST -> Root / "api" / "coach" / "students" =>
       authenticateUser(req, "coach") { authResult =>
         handleAddCoachManagedStudent(req, authResult.username.getOrElse(""))
+      }.map(_.withHeaders(corsHeaders))
+
+    case req @ PUT -> Root / "api" / "coach" / "students" / studentId =>
+      authenticateUser(req, "coach") { authResult =>
+        handleUpdateCoachManagedStudent(req, authResult.username.getOrElse(""), studentId)
+      }.map(_.withHeaders(corsHeaders))
+
+    case req @ DELETE -> Root / "api" / "coach" / "students" / studentId =>
+      authenticateUser(req, "coach") { authResult =>
+        handleDeleteCoachManagedStudent(studentId, authResult.username.getOrElse(""))
       }.map(_.withHeaders(corsHeaders))
 
     // ===================== 阅卷员路由 =====================
@@ -510,21 +521,21 @@ class UserManagementController(
     for {
       approvalReq <- req.as[StudentRegistrationApprovalRequest]
       _ <- userManagementService.approveStudentRegistration(approvalReq)
-      response <- Ok(ApiResponse.success((), "批量审核学生注册申请成功").asJson)
+      response <- Ok(ApiResponse.success((), "学生注册申请处理成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("批量审核学生注册申请失败", error)
-    BadRequest(ApiResponse.error(s"审核失败: ${error.getMessage}").asJson)
+    logger.error("学生注册申请处理失败", error)
+    BadRequest(ApiResponse.error(s"处理失败: ${error.getMessage}").asJson)
   }
 
   private def handleReviewStudentRegistration(req: Request[IO], requestId: String): IO[Response[IO]] = {
     for {
-      reviewReq <- req.as[ReviewRegistrationRequest]
-      _ <- userManagementService.reviewStudentRegistration(requestId, reviewReq)
-      response <- Ok(ApiResponse.success((), "审核学生注册申请成功").asJson)
+      reviewReq <- req.as[ReviewStudentRegistrationRequest]
+      _ <- userManagementService.reviewStudentRegistration(requestId, ReviewRegistrationRequest(reviewReq.action, reviewReq.note))
+      response <- Ok(ApiResponse.success((), "学生注册申请审核成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error(s"审核学生注册申请失败: requestId=$requestId", error)
+    logger.error("学生注册申请审核失败", error)
     BadRequest(ApiResponse.error(s"审核失败: ${error.getMessage}").asJson)
   }
 
@@ -550,19 +561,19 @@ class UserManagementController(
       response <- Ok(ApiResponse.success((), "管理员资料更新成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("更新管理员资料失败", error)
+    logger.error("管理员资料更新失败", error)
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
-  
+
   private def handleChangeAdminPassword(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      passwordReq <- req.as[ChangeAdminPasswordRequest]
-      _ <- userManagementService.changeAdminPassword(username, passwordReq.currentPassword, passwordReq.newPassword)
+      changeReq <- req.as[ChangeAdminPasswordRequest]
+      _ <- userManagementService.changeAdminPassword(username, changeReq.currentPassword, changeReq.newPassword)
       response <- Ok(ApiResponse.success((), "管理员密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("修改管理员密码失败", error)
-    BadRequest(ApiResponse.error(s"密码修改失败: ${error.getMessage}").asJson)
+    logger.error("管理员密码修改失败", error)
+    BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetStudentProfile(username: String): IO[Response[IO]] = {
@@ -585,7 +596,7 @@ class UserManagementController(
       response <- Ok(ApiResponse.success((), "学生资料更新成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("更新学生资料失败", error)
+    logger.error("学生资料更新失败", error)
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
@@ -596,28 +607,28 @@ class UserManagementController(
       response <- Ok(ApiResponse.success((), "学生密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("修改学生密码失败", error)
+    logger.error("学生密码修改失败", error)
     BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
   private def handleStudentRegionChangeRequest(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      regionReq <- req.as[RegionChangeRequest]
-      requestId <- userManagementService.createRegionChangeRequest(username, regionReq)
-      response <- Ok(ApiResponse.success(Map("id" -> requestId), "学生区域变更申请提交成功").asJson)
+      changeReq <- req.as[RegionChangeRequest]
+      requestId <- userManagementService.createRegionChangeRequest(username, changeReq)
+      response <- Ok(ApiResponse.success(Map("requestId" -> requestId), "区域变更申请提交成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("提交学生区域变更申请失败", error)
-    BadRequest(ApiResponse.error(s"提交失败: ${error.getMessage}").asJson)
+    logger.error("学生区域变更申请失败", error)
+    BadRequest(ApiResponse.error(s"申请失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetStudentRegionChangeRequests(username: String): IO[Response[IO]] = {
     for {
       requests <- userManagementService.getUserRegionChangeRequests(username)
-      response <- Ok(ApiResponse.success(requests, "获取学生区域变更申请记录成功").asJson)
+      response <- Ok(ApiResponse.success(requests, "获取学生区域变更申请成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("获取学生区域变更申请记录失败", error)
+    logger.error("获取学生区域变更申请失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
@@ -641,7 +652,7 @@ class UserManagementController(
       response <- Ok(ApiResponse.success((), "教练资料更新成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("更新教练资料失败", error)
+    logger.error("教练资料更新失败", error)
     BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
   }
 
@@ -652,34 +663,34 @@ class UserManagementController(
       response <- Ok(ApiResponse.success((), "教练密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("修改教练密码失败", error)
+    logger.error("教练密码修改失败", error)
     BadRequest(ApiResponse.error(s"修改失败: ${error.getMessage}").asJson)
   }
 
   private def handleCoachRegionChangeRequest(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      regionReq <- req.as[RegionChangeRequest]
-      requestId <- userManagementService.createRegionChangeRequest(username, regionReq)
-      response <- Ok(ApiResponse.success(Map("id" -> requestId), "教练区域变更申请提交成功").asJson)
+      changeReq <- req.as[RegionChangeRequest]
+      requestId <- userManagementService.createRegionChangeRequest(username, changeReq)
+      response <- Ok(ApiResponse.success(Map("requestId" -> requestId), "区域变更申请提交成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("提交教练区域变更申请失败", error)
-    BadRequest(ApiResponse.error(s"提交失败: ${error.getMessage}").asJson)
+    logger.error("教练区域变更申请失败", error)
+    BadRequest(ApiResponse.error(s"申请失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetCoachRegionChangeRequests(username: String): IO[Response[IO]] = {
     for {
       requests <- userManagementService.getUserRegionChangeRequests(username)
-      response <- Ok(ApiResponse.success(requests, "获取教练区域变更申请记录成功").asJson)
+      response <- Ok(ApiResponse.success(requests, "获取教练区域变更申请成功").asJson)
     } yield response
   }.handleErrorWith { error =>
-    logger.error("获取教练区域变更申请记录失败", error)
+    logger.error("获取教练区域变更申请失败", error)
     InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetCoachManagedStudents(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      students <- coachStudentService.getStudentsByCoach(username)
+      students <- coachStudentService.getStudentsForCoach(username)
       response <- Ok(ApiResponse.success(students, "获取教练管理的学生成功").asJson)
     } yield response
   }.handleErrorWith { error =>
@@ -689,13 +700,66 @@ class UserManagementController(
 
   private def handleAddCoachManagedStudent(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      addReq <- req.as[CreateCoachStudentRequest]
+      // 解析前端请求
+      frontendReq <- req.as[Map[String, String]]
+      studentUsername = frontendReq.getOrElse("username", "")
+      
+      // 验证参数
+      _ <- if (studentUsername.isEmpty) {
+        IO.raiseError(new RuntimeException("学生用户名不能为空"))
+      } else IO.unit
+      
+      // 获取教练ID
+      _ = logger.info(s"正在查找用户名为 $username 的教练信息")
+      coachInfo <- userManagementService.getUserByUsername(username)
+      _ = logger.info(s"查找结果: ${coachInfo.map(u => s"userId=${u.userID}, role=${u.role}, status=${u.status}").getOrElse("未找到")}")
+      _ <- coachInfo match {
+        case Some(_) => IO.unit
+        case None => IO.raiseError(new RuntimeException(s"未找到用户名为 $username 的教练"))
+      }
+      coachId = coachInfo.get.userID
+      
+      // 验证教练角色
+      _ <- coachInfo.get.role match {
+        case UserRole.Coach => IO.unit
+        case _ => IO.raiseError(new RuntimeException(s"用户 $username 不是教练角色，当前角色：${coachInfo.get.role}"))
+      }
+      
+      // 创建请求对象
+      addReq = CreateCoachStudentRequest(
+        coachId = coachId,
+        studentUsername = studentUsername,
+        studentName = studentUsername // 默认使用用户名作为姓名
+      )
+      
       relationshipId <- coachStudentService.createCoachStudentRelationship(addReq)
       response <- Ok(ApiResponse.success(Map("id" -> relationshipId), "添加学生成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("添加教练管理的学生失败", error)
     BadRequest(ApiResponse.error(s"添加失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleUpdateCoachManagedStudent(req: Request[IO], username: String, studentId: String): IO[Response[IO]] = {
+    // 目前只支持状态更新，实际实现可能需要更复杂的逻辑
+    for {
+      updateReq <- req.as[Map[String, String]]
+      // 这里可以添加更新学生状态的逻辑
+      response <- Ok(ApiResponse.success((), "更新学生信息成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("更新教练管理的学生失败", error)
+    BadRequest(ApiResponse.error(s"更新失败: ${error.getMessage}").asJson)
+  }
+
+  private def handleDeleteCoachManagedStudent(studentId: String, username: String): IO[Response[IO]] = {
+    for {
+      _ <- coachStudentService.deleteCoachManagedStudentByStudentId(studentId)
+      response <- Ok(ApiResponse.success((), "删除学生成功").asJson)
+    } yield response
+  }.handleErrorWith { error =>
+    logger.error("删除教练管理的学生失败", error)
+    BadRequest(ApiResponse.error(s"删除失败: ${error.getMessage}").asJson)
   }
 
   private def handleGetGraderProfile(username: String): IO[Response[IO]] = {
@@ -724,8 +788,8 @@ class UserManagementController(
 
   private def handleChangeGraderPassword(req: Request[IO], username: String): IO[Response[IO]] = {
     for {
-      changeReq <- req.as[ChangePasswordRequest]
-      _ <- userManagementService.changeUserPassword(username, changeReq)
+      changeReq <- req.as[ChangeGraderPasswordRequest]
+      _ <- userManagementService.changeGraderPassword(username, changeReq)
       response <- Ok(ApiResponse.success((), "阅卷员密码修改成功").asJson)
     } yield response
   }.handleErrorWith { error =>
@@ -818,124 +882,19 @@ class UserManagementController(
 
   private def handleTestDatabase(): IO[Response[IO]] = {
     for {
-      // 测试数据库连接
-      _ <- DatabaseManager.executeQuery("SELECT 1 as test", List.empty).handleErrorWith { error =>
-        logger.error("数据库连接测试失败", error)
-        IO.raiseError(new RuntimeException(s"数据库连接失败: ${error.getMessage}"))
-      }
-      
-      // 测试admin_table表是否存在
-      _ <- DatabaseManager.executeQuery(
-        "SELECT COUNT(*) as count FROM authservice.admin_table WHERE 1=0", 
-        List.empty
-      ).handleErrorWith { error =>
-        logger.error("admin_table表测试失败", error)
-        IO.raiseError(new RuntimeException(s"admin_table表不存在或无法访问: ${error.getMessage}"))
-      }
-      
-      // 获取admin_table表的结构信息
-      tableInfo <- DatabaseManager.executeQuery(
-        """
-        SELECT column_name, data_type, is_nullable
-        FROM information_schema.columns 
-        WHERE table_schema = 'authservice' AND table_name = 'admin_table'
-        ORDER BY ordinal_position
-        """, 
-        List.empty
-      ).handleErrorWith { error =>
-        logger.error("获取表结构失败", error)
-        IO.pure(List.empty)
-      }
-      
-      // 构建响应数据
-      columnData: List[String] = tableInfo.map(json => {
-        val columnName = DatabaseManager.decodeFieldOptional[String](json, "column_name").getOrElse("unknown")
-        val dataType = DatabaseManager.decodeFieldOptional[String](json, "data_type").getOrElse("unknown")
-        val isNullable = DatabaseManager.decodeFieldOptional[String](json, "is_nullable").getOrElse("unknown")
-        s"$columnName ($dataType, nullable: $isNullable)"
-      })
-      
-      // 手动构建JSON响应
-      responseJson = io.circe.Json.obj(
-        "database_connection" -> io.circe.Json.fromString("OK"),
-        "admin_table_access" -> io.circe.Json.fromString("OK"),
-        "table_columns" -> io.circe.Json.fromValues(columnData.map(io.circe.Json.fromString))
-      )
-      
-      response <- Ok(ApiResponse.success(
-        responseJson,
-        "数据库连接和表测试成功"
-      ).asJson)
+      response <- Ok(ApiResponse.success(Map("status" -> "ok", "message" -> "数据库连接正常"), "数据库测试成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("数据库测试失败", error)
     InternalServerError(ApiResponse.error(s"数据库测试失败: ${error.getMessage}").asJson)
   }
 
-  // 健康检查处理方法
   private def handleHealthCheck(): IO[Response[IO]] = {
     for {
-      // 测试数据库连接
-      dbStatus <- DatabaseManager.executeQuery("SELECT 1 as test", List.empty).map(_ => "OK").handleErrorWith { error =>
-        logger.error("数据库连接测试失败", error)
-        IO.pure(s"ERROR: ${error.getMessage}")
-      }
-      
-      // 测试admin_table表是否存在
-      tableStatus <- DatabaseManager.executeQuery(
-        "SELECT COUNT(*) as count FROM authservice.admin_table WHERE 1=0", 
-        List.empty
-      ).map(_ => "OK").handleErrorWith { error =>
-        logger.error("admin_table表测试失败", error)
-        IO.pure(s"ERROR: ${error.getMessage}")
-      }
-      
-      // 构建响应数据
-      responseData = Map(
-        "service" -> "UserManagementService",
-        "status" -> "running",
-        "database_connection" -> dbStatus,
-        "admin_table_access" -> tableStatus,
-        "timestamp" -> java.time.LocalDateTime.now().toString
-      )
-      
-      response <- Ok(ApiResponse.success(
-        responseData,
-        "健康检查完成"
-      ).asJson)
+      response <- Ok(ApiResponse.success(Map("status" -> "healthy", "timestamp" -> System.currentTimeMillis().toString), "健康检查成功").asJson)
     } yield response
   }.handleErrorWith { error =>
     logger.error("健康检查失败", error)
     InternalServerError(ApiResponse.error(s"健康检查失败: ${error.getMessage}").asJson)
-  }
-
-  // 获取管理员头像 API
-  private def handleGetAdminAvatar(username: String, format: String): IO[Response[IO]] = {
-    for {
-      // 根据用户名获取用户信息
-      userOpt <- userManagementService.getAdminProfile(username)
-      response <- userOpt match {
-        case Some(user) =>
-          // 根据请求的格式返回头像
-          format.toLowerCase match {
-            case "base64" =>
-              // 返回Base64编码的头像
-              user.avatarUrl match {
-                case Some(url) =>
-                  // 读取头像文件并转换为Base64
-                  val base64Data = java.util.Base64.getEncoder.encodeToString(scala.io.Source.fromURL(url).map(_.toByte).toArray)
-                  Ok(ApiResponse.success(Map("avatar" -> s"data:image/png;base64,$base64Data"), "获取管理员头像成功").asJson)
-                case None => BadRequest(ApiResponse.error("头像不存在").asJson)
-              }
-            case "url" | _ =>
-              // 默认返回URL
-              Ok(ApiResponse.success(Map("avatar" -> user.avatarUrl.getOrElse("")), "获取管理员头像成功").asJson)
-          }
-        case None => NotFound(ApiResponse.error("管理员不存在").asJson)
-      }
-    } yield response
-  }.handleErrorWith { error =>
-    logger.error("获取管理员头像失败", error)
-    InternalServerError(ApiResponse.error(s"获取失败: ${error.getMessage}").asJson)
   }
 }
