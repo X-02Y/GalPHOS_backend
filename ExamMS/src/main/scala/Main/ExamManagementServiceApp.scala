@@ -35,7 +35,7 @@ object ExamManagementServiceApp extends IOApp {
         val examService = new ExamServiceImpl()
         val questionService = new QuestionServiceImpl()
         val submissionService = new SubmissionServiceImpl()
-        val authService = new AuthServiceImpl(config)
+        val authService = new HttpAuthService(config) // Use HTTP-based auth service
         val fileStorageService = new FileStorageServiceImpl(config, client)
 
         // 创建控制器

@@ -9,6 +9,7 @@ import java.sql.ResultSet
 
 trait ExamService {
   def getExamList(): IO[List[ExamListResponse]]
+  def getExamsForAdmin(): IO[List[ExamListResponse]]
   def getExamById(examId: String): IO[Option[Exam]]
   def createExam(request: CreateExamRequest, createdBy: String): IO[Exam]
   def updateExam(examId: String, request: UpdateExamRequest): IO[Option[Exam]]
@@ -47,11 +48,34 @@ class ExamServiceImpl extends ExamService {
     DatabaseUtils.executeQuery(sql)(parseExamListResponse)
   }
 
+  override def getExamsForAdmin(): IO[List[ExamListResponse]] = {
+    val sql = """
+      SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
+             e.total_questions, e.duration, e.created_at, e.created_by, e.max_score, e.total_score,
+             qf.file_url as question_file_url, qf.file_name as question_file_name,
+             qf.file_size as question_file_size, qf.upload_time as question_upload_time,
+             qf.mime_type as question_mime_type,
+             af.file_url as answer_file_url, af.file_name as answer_file_name,
+             af.file_size as answer_file_size, af.upload_time as answer_upload_time,
+             af.mime_type as answer_mime_type,
+             asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
+             asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
+             asf.mime_type as answer_sheet_mime_type
+      FROM exams e
+      LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
+      LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
+      LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
+      ORDER BY e.created_at DESC
+    """
+
+    DatabaseUtils.executeQuery(sql)(parseExamListResponse)
+  }
+
   override def getExamById(examId: String): IO[Option[Exam]] = {
     val sql = """
       SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
              e.created_at, e.updated_at, e.created_by, e.duration, e.total_questions,
-             e.max_score, e.subject, e.instructions,
+             e.max_score, e.total_score, e.subject, e.instructions,
              qf.file_url as question_file_url, qf.file_name as question_file_name,
              qf.file_size as question_file_size, qf.upload_time as question_upload_time,
              qf.mime_type as question_mime_type,
@@ -348,6 +372,7 @@ class ExamServiceImpl extends ExamService {
       createdBy = rs.getString("created_by"),
       totalQuestions = Option(rs.getInt("total_questions")).filter(_ != 0),
       maxScore = Option(rs.getDouble("max_score")).filter(_ != 0.0),
+      totalScore = Option(rs.getDouble("total_score")).filter(_ != 0.0),
       subject = Option(rs.getString("subject")).filter(_.nonEmpty),
       instructions = Option(rs.getString("instructions")).filter(_.nonEmpty)
     )

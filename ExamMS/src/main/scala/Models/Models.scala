@@ -160,6 +160,7 @@ case class Exam(
   participants: List[String] = List.empty,
   totalQuestions: Option[Int] = None,
   maxScore: Option[Double] = None,
+  totalScore: Option[Double] = None,
   subject: Option[String] = None,
   instructions: Option[String] = None
 )
