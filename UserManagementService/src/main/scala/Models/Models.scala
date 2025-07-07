@@ -29,20 +29,25 @@ case class PaginatedResponse[T](
 )
 
 // 用户状态枚举
+// 支持前端的 pending/approved/disabled/active
+// 兼容大小写
+// 新增 Approved
+//
 enum UserStatus(val value: String):
-  case Pending extends UserStatus("PENDING")
-  case Active extends UserStatus("ACTIVE")
-  case Disabled extends UserStatus("DISABLED")
+  case Pending extends UserStatus("pending")
+  case Approved extends UserStatus("approved")
+  case Active extends UserStatus("active")
+  case Disabled extends UserStatus("disabled")
 
 object UserStatus {
-  def fromString(status: String): UserStatus = status.toUpperCase match {
-    case "PENDING" => Pending
-    case "ACTIVE" => Active
-    case "DISABLED" => Disabled
+  def fromString(status: String): UserStatus = status.toLowerCase match {
+    case "pending" => Pending
+    case "approved" => Approved
+    case "active" => Active
+    case "disabled" => Disabled
     case _ => throw new IllegalArgumentException(s"未知状态: $status")
   }
-
-  implicit val encoder: Encoder[UserStatus] = Encoder.encodeString.contramap(_.value.toLowerCase)
+  implicit val encoder: Encoder[UserStatus] = Encoder.encodeString.contramap(_.value)
   implicit val decoder: Decoder[UserStatus] = Decoder.decodeString.emap { str =>
     try Right(UserStatus.fromString(str))
     catch case _: IllegalArgumentException => Left(s"Invalid status: $str")
@@ -50,24 +55,24 @@ object UserStatus {
 }
 
 // 用户角色枚举
+// 支持前端的 student/coach/grader/admin/super_admin
+//
 enum UserRole(val value: String):
   case Student extends UserRole("student")
   case Coach extends UserRole("coach")
   case Grader extends UserRole("grader")
+  case Admin extends UserRole("admin")
+  case SuperAdmin extends UserRole("super_admin")
 
 object UserRole {
-  def fromString(role: String): UserRole = role match {
-    // 支持英文角色名
-    case "student" => Student
-    case "coach" => Coach
-    case "grader" => Grader
-    // 支持中文角色名（数据库中存储的格式）
-    case "学生角色" => Student
-    case "教练角色" => Coach
-    case "阅卷者角色" => Grader
+  def fromString(role: String): UserRole = role.toLowerCase match {
+    case "student" | "学生角色" => Student
+    case "coach" | "教练角色" => Coach
+    case "grader" | "阅卷者角色" => Grader
+    case "admin" => Admin
+    case "super_admin" => SuperAdmin
     case _ => throw new IllegalArgumentException(s"未知角色: $role")
   }
-
   implicit val encoder: Encoder[UserRole] = Encoder.encodeString.contramap(_.value)
   implicit val decoder: Decoder[UserRole] = Decoder.decodeString.emap { str =>
     try Right(UserRole.fromString(str))
@@ -83,9 +88,25 @@ case class PendingUser(
   role: UserRole,
   province: Option[String],
   school: Option[String],
-  appliedAt: LocalDateTime,
+  appliedAt: String, // ISO字符串
   status: UserStatus
 )
+object PendingUser {
+  import io.circe.syntax.*
+  import io.circe.{Json, Encoder}
+  implicit val pendingUserEncoder: Encoder[PendingUser] = Encoder.instance { user =>
+    Json.obj(
+      "id" -> user.id.asJson,
+      "username" -> user.username.asJson,
+      "phone" -> user.phone.asJson,
+      "role" -> user.role.asJson,
+      "province" -> user.province.asJson,
+      "school" -> user.school.asJson,
+      "appliedAt" -> user.appliedAt.asJson,
+      "status" -> user.status.asJson
+    )
+  }
+}
 
 // 已审核用户
 case class ApprovedUser(
@@ -96,15 +117,13 @@ case class ApprovedUser(
   province: Option[String],
   school: Option[String],
   status: UserStatus,
-  approvedAt: Option[LocalDateTime],
-  lastLoginAt: Option[LocalDateTime],
+  approvedAt: Option[String],
+  lastLoginAt: Option[String],
   avatarUrl: Option[String]
 )
-
 object ApprovedUser {
   import io.circe.syntax.*
   import io.circe.{Json, Encoder}
-  
   implicit val approvedUserEncoder: Encoder[ApprovedUser] = Encoder.instance { user =>
     Json.obj(
       "id" -> user.id.asJson,
@@ -117,6 +136,34 @@ object ApprovedUser {
       "approvedAt" -> user.approvedAt.asJson,
       "lastLoginAt" -> user.lastLoginAt.asJson,
       "avatarUrl" -> user.avatarUrl.asJson
+    )
+  }
+}
+
+// 管理员用户（简化版，兼容前端 AdminUser）
+case class AdminProfile(
+  id: String,
+  username: String,
+  avatar: Option[String] = None, // base64
+  avatarUrl: Option[String] = None, // url
+  role: String, // "admin" | "super_admin"
+  status: String, // "active" | "disabled"
+  createdAt: Option[String] = None,
+  lastLoginAt: Option[String] = None
+)
+object AdminProfile {
+  import io.circe.syntax.*
+  import io.circe.{Json, Encoder}
+  implicit val adminProfileEncoder: Encoder[AdminProfile] = Encoder.instance { admin =>
+    Json.obj(
+      "id" -> admin.id.asJson,
+      "username" -> admin.username.asJson,
+      "avatar" -> admin.avatar.asJson,
+      "avatarUrl" -> admin.avatarUrl.asJson,
+      "role" -> admin.role.asJson,
+      "status" -> admin.status.asJson,
+      "createdAt" -> admin.createdAt.asJson,
+      "lastLoginAt" -> admin.lastLoginAt.asJson
     )
   }
 }
@@ -240,26 +287,26 @@ case class StudentForCoach(
   createdAt: String
 )
 
+// 已审核用户DTO（用于API响应，严格适配前端）
+case class ApprovedUserDto(
+  id: String,
+  username: String,
+  phone: Option[String],
+  role: String,
+  province: String, // 保证为字符串
+  school: String,   // 保证为字符串
+  status: String,   // 只允许"approved"或"disabled"
+  approvedAt: String, // 保证为字符串
+  lastLoginAt: String, // 保证为字符串
+  avatarUrl: Option[String]
+)
+
 // 已审核用户列表响应
 case class ApprovedUsersResponse(
   users: List[ApprovedUserDto],
   total: Int,
   page: Int,
   limit: Int
-)
-
-// 已审核用户DTO（用于API响应）
-case class ApprovedUserDto(
-  id: String,
-  username: String,
-  phone: Option[String],
-  role: String,
-  province: Option[String],
-  school: Option[String],
-  status: String,
-  approvedAt: Option[String],
-  lastLoginAt: Option[String],
-  avatarUrl: Option[String]
 )
 
 // 个人资料相关模型
@@ -297,33 +344,6 @@ case class ChangePasswordRequest(
 case class ChangeGraderPasswordRequest(
   currentPassword: String,
   newPassword: String
-)
-
-case class AdminProfile(
-  id: String,
-  username: String,
-  createdAt: Option[String],
-  lastLoginAt: Option[String],
-  avatarUrl: Option[String] = None,
-  avatar: Option[String] = None, // 新增：支持base64头像数据
-  status: Option[String] = None,
-  role: Option[String] = None
-)
-
-case class UpdateAdminProfileRequest(
-  // 管理员可以更新用户名和头像
-  username: Option[String] = None,
-  avatarUrl: Option[String] = None,
-  avatar: Option[String] = None // 新增：支持直接传递base64头像数据
-)
-
-case class ChangeAdminPasswordRequest(
-  currentPassword: String,
-  newPassword: String
-)
-
-case class ResetAdminPasswordRequest(
-  password: String  // 新密码（由超级管理员直接设置）
 )
 
 // 创建系统管理员请求
@@ -423,4 +443,28 @@ case class StudentRegistrationApprovalRequest(
   requestIds: List[String],
   action: String, // "approve" | "reject"
   adminComment: Option[String] = None
+)
+
+// ===================== 管理员相关补充模型 =====================
+
+// 更新管理员个人资料请求
+case class UpdateAdminProfileRequest(
+  username: Option[String] = None,    // 新用户名（需要检查唯一性）
+  role: Option[String] = None,        // "admin" 或 "super_admin"
+  status: Option[String] = None,      // "active" 或 "disabled"
+  name: Option[String] = None,        // 管理员显示名称
+  avatar: Option[String] = None,      // base64头像（兼容前端）
+  avatarUrl: Option[String] = None    // 头像URL
+)
+
+// 管理员修改密码请求
+case class ChangeAdminPasswordRequest(
+  currentPassword: String, // 旧密码
+  newPassword: String      // 新密码
+)
+
+// 管理员重置密码请求（通常由超级管理员操作）
+case class ResetAdminPasswordRequest(
+  adminId: String,         // 管理员ID
+  password: String         // 新密码
 )

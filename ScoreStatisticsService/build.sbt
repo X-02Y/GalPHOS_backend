@@ -49,7 +49,10 @@ lazy val root = (project in file("."))
     name := "ScoreStatisticsService",
     // 添加编码设置
     javacOptions ++= Seq("-encoding", "UTF-8"),
-    scalacOptions ++= Seq("-encoding", "UTF-8"),
+    scalacOptions ++= Seq(
+      "-encoding", "UTF-8",
+      "-Xmax-inlines", "64"
+    ),
   )
 
 val http4sVersion = "1.0.0-M44"

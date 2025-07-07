@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 import java.util.UUID
 import Config.Constants
+import Utils.FileStorageClient
 
 trait UserManagementService {
   def getPendingUsers(): IO[List[PendingUser]]
@@ -58,11 +59,150 @@ trait UserManagementService {
   def getUserAvatar(username: String, format: String = "url"): IO[Option[String]]
 }
 
-class UserManagementServiceImpl() extends UserManagementService {
+class UserManagementServiceImpl(
+  val config: Config.ServiceConfig = Config.ConfigLoader.loadConfig()
+) extends UserManagementService {
   private val logger = LoggerFactory.getLogger("UserManagementService")
-  private val schemaName = "authservice"  // 使用固定的schema名称
-  private val config = Config.ConfigLoader.loadConfig() // 添加config变量
-  private val regionClient = RegionServiceClient(config.regionServiceUrl.getOrElse("http://localhost:3007"))
+  private val schemaName = "authservice"
+  
+  // 初始化客户端
+  private lazy val fileStorageClient = new FileStorageClient(config)
+  private lazy val regionClient: RegionServiceClient = new RegionServiceClientImpl(
+    config.regionServiceUrl.getOrElse("http://localhost:3007")
+  )
+  
+  // 辅助方法：通过用户名获取用户ID
+  private def getUserIdByUsername(username: String): IO[Option[String]] = {
+    val sql = s"SELECT user_id FROM authservice.user_table WHERE username = ?"
+    val params = List(SqlParameter("String", username))
+    
+    for {
+      results <- DatabaseManager.executeQuery(sql, params)
+    } yield results.headOption.map(json => 
+      DatabaseManager.decodeFieldUnsafe[String](json, "user_id")
+    )
+  }
+  
+  // 辅助方法：更新用户头像URL
+  private def updateUserAvatarUrl(username: String, avatarUrl: String): IO[Unit] = {
+    val sql = s"UPDATE authservice.user_table SET avatar_url = ? WHERE username = ?"
+    val params = List(
+      SqlParameter("String", avatarUrl),
+      SqlParameter("String", username)
+    )
+    
+    for {
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException(s"用户不存在或更新头像URL失败: $username"))
+      } else {
+        IO.unit
+      }
+    } yield ()
+  }
+
+  // 添加缺失的转换方法
+  private def convertToPendingUserWithRegionAsync(json: io.circe.Json): IO[PendingUser] = {
+    val baseUser = convertToPendingUserBase(json)
+    
+    for {
+      // 从数据库获取省份和学校ID，然后通过 regionClient 获取名称
+      provinceId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "province_id"))
+      schoolId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "school_id"))
+      
+      // 如果有省份和学校ID，通过RegionMS获取名称
+      regionInfo <- (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          regionClient.getProvinceAndSchoolNamesByIds(pId, sId).map {
+            case Right(names) => (Some(names.provinceName), Some(names.schoolName))
+            case Left(_) => (Some("Unknown Province"), Some("Unknown School"))
+          }.handleError { _ =>
+            (Some("Unknown Province"), Some("Unknown School"))
+          }
+        case _ =>
+          IO.pure((None, None))
+      }
+    } yield baseUser.copy(province = regionInfo._1, school = regionInfo._2)
+  }
+
+  private def convertToApprovedUserWithRegionAsync(json: io.circe.Json): IO[ApprovedUser] = {
+    val baseUser = convertToApprovedUserBase(json)
+    
+    for {
+      // 从数据库获取省份和学校ID，然后通过 regionClient 获取名称
+      provinceId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "province_id"))
+      schoolId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "school_id"))
+      
+      // 如果有省份和学校ID，通过RegionMS获取名称
+      regionInfo <- (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          regionClient.getProvinceAndSchoolNamesByIds(pId, sId).map {
+            case Right(names) => (Some(names.provinceName), Some(names.schoolName))
+            case Left(_) => (Some("Unknown Province"), Some("Unknown School"))
+          }.handleError { _ =>
+            (Some("Unknown Province"), Some("Unknown School"))
+          }
+        case _ =>
+          IO.pure((None, None))
+      }
+    } yield baseUser.copy(province = regionInfo._1, school = regionInfo._2)
+  }
+
+  private def convertToUserProfileWithRegionAsync(json: io.circe.Json): IO[UserProfile] = {
+    val baseProfile = convertToUserProfile(json)
+    
+    for {
+      // 从数据库获取省份和学校ID，然后通过 regionClient 获取名称
+      provinceId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "province_id"))
+      schoolId <- IO.pure(DatabaseManager.decodeFieldOptional[String](json, "school_id"))
+      
+      // 如果有省份和学校ID，通过RegionMS获取名称
+      regionInfo <- (provinceId, schoolId) match {
+        case (Some(pId), Some(sId)) =>
+          regionClient.getProvinceAndSchoolNamesByIds(pId, sId).map {
+            case Right(names) => (Some(names.provinceName), Some(names.schoolName))
+            case Left(_) => (Some("Unknown Province"), Some("Unknown School"))
+          }.handleError { _ =>
+            (Some("Unknown Province"), Some("Unknown School"))
+          }
+        case _ =>
+          IO.pure((None, None))
+      }
+    } yield baseProfile.copy(province = regionInfo._1, school = regionInfo._2)
+  }
+
+  // 基础转换方法（不涉及异步调用）
+  private def convertToPendingUserBase(json: io.circe.Json): PendingUser = {
+    PendingUser(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+      role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
+      province = None, // 将在异步方法中填充
+      school = None,   // 将在异步方法中填充
+      appliedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "appliedat")
+        .map(_.toString)
+        .getOrElse(LocalDateTime.now().toString),
+      status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status"))
+    )
+  }
+
+  private def convertToApprovedUserBase(json: io.circe.Json): ApprovedUser = {
+    ApprovedUser(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "username"),
+      phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
+      role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
+      province = None, // 将在异步方法中填充
+      school = None,   // 将在异步方法中填充
+      status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
+      approvedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "approved_at")
+        .map(_.toString),
+      lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat")
+        .map(_.toString),
+      avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
+    )
+  }
 
   override def getPendingUsers(): IO[List[PendingUser]] = {
     val testSql = s"""
@@ -1137,8 +1277,8 @@ class UserManagementServiceImpl() extends UserManagementService {
       lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString),
       avatarUrl = finalAvatarUrl,
       avatar = finalAvatar,
-      status = Some(normalizedStatus),
-      role = Some(normalizedRole)
+      status = normalizedStatus,
+      role = normalizedRole
     )
   }
 
@@ -1313,9 +1453,6 @@ class UserManagementServiceImpl() extends UserManagementService {
     )
   }
 
-  // 文件上传相关方法实现
-  private lazy val fileStorageClient = Utils.FileStorageClient(config)
-
   override def uploadAvatar(username: String, userType: String, fileName: String, fileData: Array[Byte], mimeType: String): IO[FileOperationResponse] = {
     for {
       // 获取用户ID
@@ -1436,253 +1573,15 @@ class UserManagementServiceImpl() extends UserManagementService {
     } yield result
   }
 
-  // 获取用户头像（支持返回base64或URL）
+  // 获取用户头像
   override def getUserAvatar(username: String, format: String = "url"): IO[Option[String]] = {
-    for {
-      // 获取用户资料获取avatarUrl
-      profileOpt <- getUserProfile(username)
-      result <- profileOpt match {
-        case Some(profile) if profile.avatarUrl.isDefined =>
-          val avatarUrl = profile.avatarUrl.get
-          if (format == "base64" && avatarUrl.contains("files/download/")) {
-            // 从FileStorageService获取文件并转换为base64
-            val fileId = avatarUrl.split("/").last
-            fileStorageClient.downloadFileAsBase64(fileId, username, "student")
-              .map(base64 => Some(s"data:image/jpeg;base64,$base64"))
-              .handleErrorWith(_ => IO.pure(Some(avatarUrl))) // 降级为URL
-          } else {
-            IO.pure(Some(avatarUrl))
-          }
-        case _ => IO.pure(None)
-      }
-    } yield result
-  }
-
-  // 辅助方法：通过用户名获取用户ID
-  private def getUserIdByUsername(username: String): IO[Option[String]] = {
-    val sql = s"""
-      SELECT user_id
-      FROM authservice.user_table
-      WHERE username = ? AND status = 'ACTIVE'
-    """.stripMargin
-
+    val sql = s"SELECT avatar_url FROM authservice.user_table WHERE username = ?"
     val params = List(SqlParameter("String", username))
-
-    DatabaseManager.executeQuery(sql, params).map { results =>
-      results.headOption.map(DatabaseManager.decodeFieldUnsafe[String](_, "user_id"))
-    }.handleErrorWith { error =>
-      logger.warn(s"获取用户ID失败: ${error.getMessage}")
-      IO.pure(None)
-    }
-  }
-
-  // 辅助方法：更新用户头像URL
-  private def updateUserAvatarUrl(username: String, avatarUrl: String): IO[Unit] = {
-    val sql = s"""
-      UPDATE authservice.user_table
-      SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE username = ?
-    """.stripMargin
-
-    val params = List(
-      SqlParameter("String", avatarUrl),
-      SqlParameter("String", username)
+    
+    for {
+      results <- DatabaseManager.executeQuery(sql, params)
+    } yield results.headOption.flatMap(json =>
+      DatabaseManager.decodeFieldOptional[String](json, "avatar_url")
     )
-
-    DatabaseManager.executeUpdate(sql, params).map(_ => ()).handleErrorWith { error =>
-      logger.error(s"更新用户头像URL失败: ${error.getMessage}", error)
-      IO.raiseError(error)
-    }
-  }
-
-  // 使用RegionMS内部API根据ID获取省份和学校名称的辅助方法
-  private def getRegionNamesByIds(provinceId: String, schoolId: String, username: String): IO[Option[(String, String)]] = {
-    regionClient.getProvinceAndSchoolNamesByIds(provinceId, schoolId).map {
-      case Right(response) =>
-        logger.info(s"用户 $username: 通过内部API获取到省份='${response.provinceName}', 学校='${response.schoolName}'")
-        Some((response.provinceName, response.schoolName))
-      case Left(error) =>
-        logger.warn(s"用户 $username: 内部API调用失败: $error")
-        None
-    }.handleErrorWith { ex =>
-      logger.error(s"用户 $username: 调用RegionMS内部API异常: ${ex.getMessage}", ex)
-      IO.pure(None)
-    }
-  }
-
-  // 新的异步转换方法 - 使用RegionMS内部API
-  private def convertToPendingUserWithRegionAsync(json: io.circe.Json): IO[PendingUser] = {
-    try {
-      val roleStr = DatabaseManager.decodeFieldUnsafe[String](json, "role")
-      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
-      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
-      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
-      
-      // 如果有省份ID和学校ID，使用内部API获取名称
-      val regionNamesIO = (provinceId, schoolId) match {
-        case (Some(pId), Some(sId)) =>
-          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
-          getRegionNamesByIds(pId, sId, username)
-        case _ =>
-          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
-          IO.pure(None)
-      }
-      
-      regionNamesIO.map { regionNamesOpt =>
-        val (provinceName, schoolName) = regionNamesOpt match {
-          case Some((pName, sName)) => (Some(pName), Some(sName))
-          case None => (None, None)
-        }
-        
-        logger.info(s"转换待审核用户 $username，角色: '$roleStr', 省份: $provinceName, 学校: $schoolName")
-        
-        PendingUser(
-          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-          username = username,
-          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
-          role = UserRole.fromString(roleStr),
-          province = provinceName,
-          school = schoolName,
-          appliedAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "appliedAt").getOrElse(LocalDateTime.now()),
-          status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status"))
-        )
-      }
-    } catch {
-      case e: Exception =>
-        logger.error(s"转换待审核用户失败: ${e.getMessage}, JSON: $json")
-        IO.raiseError(e)
-    }
-  }
-
-  // 新的异步转换方法 - 使用RegionMS内部API转换ApprovedUser
-  private def convertToApprovedUserWithRegionAsync(json: io.circe.Json): IO[ApprovedUser] = {
-    try {
-      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
-      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
-      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
-      
-      // 如果有省份ID和学校ID，使用内部API获取名称
-      val regionNamesIO = (provinceId, schoolId) match {
-        case (Some(pId), Some(sId)) =>
-          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
-          getRegionNamesByIds(pId, sId, username)
-        case _ =>
-          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
-          IO.pure(None)
-      }
-      
-      regionNamesIO.map { regionNamesOpt =>
-        val (provinceName, schoolName) = regionNamesOpt match {
-          case Some((pName, sName)) => (Some(pName), Some(sName))
-          case None => (None, None)
-        }
-        
-        logger.info(s"转换已审核用户 $username，省份: $provinceName, 学校: $schoolName")
-        
-        // 处理时间字段
-        val approvedAtOpt = DatabaseManager.decodeFieldOptional[String](json, "approved_at").flatMap { timeStr =>
-          try {
-            val formattedTimeStr = if (timeStr.contains(" ")) {
-              val parts = timeStr.split("\\.")
-              if (parts.length == 2) {
-                val microseconds = parts(1).take(6).padTo(6, '0')
-                s"${parts(0).replace(" ", "T")}.$microseconds"
-              } else {
-                timeStr.replace(" ", "T")
-              }
-            } else {
-              timeStr
-            }
-            Some(LocalDateTime.parse(formattedTimeStr))
-          } catch {
-            case e: Exception =>
-              logger.warn(s"解析审核时间失败: $timeStr, 错误: ${e.getMessage}")
-              None
-          }
-        }
-
-        val lastLoginAtOpt = DatabaseManager.decodeFieldOptional[String](json, "lastloginat").flatMap { timeStr =>
-          try {
-            val formattedTimeStr = if (timeStr.contains(" ")) {
-              val parts = timeStr.split("\\.")
-              if (parts.length == 2) {
-                val microseconds = parts(1).take(6).padTo(6, '0')
-                s"${parts(0).replace(" ", "T")}.$microseconds"
-              } else {
-                timeStr.replace(" ", "T")
-              }
-            } else {
-              timeStr
-            }
-            Some(LocalDateTime.parse(formattedTimeStr))
-          } catch {
-            case e: Exception =>
-              logger.warn(s"解析最后登录时间失败: $timeStr, 错误: ${e.getMessage}")
-              None
-          }
-        }
-
-        ApprovedUser(
-          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-          username = username,
-          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
-          role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")),
-          province = provinceName,
-          school = schoolName,
-          status = UserStatus.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "status")),
-          approvedAt = approvedAtOpt,
-          lastLoginAt = lastLoginAtOpt,
-          avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl")
-        )
-      }
-    } catch {
-      case e: Exception =>
-        logger.error(s"转换已审核用户失败: ${e.getMessage}, JSON: $json")
-        IO.raiseError(e)
-    }
-  }
-
-  // 新的异步转换方法 - 使用RegionMS内部API转换UserProfile
-  private def convertToUserProfileWithRegionAsync(json: io.circe.Json): IO[UserProfile] = {
-    try {
-      val provinceId = DatabaseManager.decodeFieldOptional[String](json, "province_id")
-      val schoolId = DatabaseManager.decodeFieldOptional[String](json, "school_id")
-      val username = DatabaseManager.decodeFieldUnsafe[String](json, "username")
-      
-      // 如果有省份ID和学校ID，使用内部API获取名称
-      val regionNamesIO = (provinceId, schoolId) match {
-        case (Some(pId), Some(sId)) =>
-          logger.info(s"用户 $username: 使用内部API获取地区信息 - 省份ID: $pId, 学校ID: $sId")
-          getRegionNamesByIds(pId, sId, username)
-        case _ =>
-          logger.warn(s"用户 $username: 省份ID或学校ID为空 - 省份ID: $provinceId, 学校ID: $schoolId")
-          IO.pure(None)
-      }
-      
-      regionNamesIO.map { regionNamesOpt =>
-        val (provinceName, schoolName) = regionNamesOpt match {
-          case Some((pName, sName)) => (Some(pName), Some(sName))
-          case None => (None, None)
-        }
-        
-        logger.info(s"转换用户资料 $username，省份: $provinceName, 学校: $schoolName")
-        
-        UserProfile(
-          id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
-          username = username,
-          phone = DatabaseManager.decodeFieldOptional[String](json, "phone"),
-          role = UserRole.fromString(DatabaseManager.decodeFieldUnsafe[String](json, "role")).value,
-          province = provinceName,
-          school = schoolName,
-          avatarUrl = DatabaseManager.decodeFieldOptional[String](json, "avatarurl"),
-          createdAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "createdat").map(_.toString),
-          lastLoginAt = DatabaseManager.decodeFieldOptional[LocalDateTime](json, "lastloginat").map(_.toString)
-        )
-      }
-    } catch {
-      case e: Exception =>
-        logger.error(s"转换用户资料失败: ${e.getMessage}, JSON: $json")
-        IO.raiseError(e)
-    }
   }
 }
