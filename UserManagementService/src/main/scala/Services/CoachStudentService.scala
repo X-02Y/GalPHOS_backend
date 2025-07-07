@@ -6,6 +6,7 @@ import cats.effect.IO
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime
 import java.util.UUID
+import io.circe.{Json, HCursor}
 
 trait CoachStudentService {
   def getCoachStudentRelationships(params: QueryParams): IO[PaginatedResponse[CoachStudentRelationship]]
@@ -13,6 +14,10 @@ trait CoachStudentService {
   def createCoachStudentRelationship(request: CreateCoachStudentRequest): IO[String]
   def deleteCoachStudentRelationship(relationshipId: String): IO[Unit]
   def getStudentsByCoach(coachId: String): IO[List[CoachStudentRelationship]]
+  def getStudentsForCoach(coachUsername: String): IO[List[StudentForCoach]]
+  def updateCoachManagedStudent(studentId: String, coachUsername: String, updateData: Map[String, String]): IO[Unit]
+  def deleteCoachManagedStudent(studentId: String, coachUsername: String): IO[Unit]
+  def deleteCoachManagedStudentByStudentId(studentId: String): IO[Unit]
 }
 
 class CoachStudentServiceImpl() extends CoachStudentService {
@@ -98,10 +103,10 @@ class CoachStudentServiceImpl() extends CoachStudentService {
   }
 
   override def createCoachStudentRelationship(request: CreateCoachStudentRequest): IO[String] = {
-    // 首先验证教练存在且角色正确
+    // 首先验证教练存在且角色正确（支持多种角色格式）
     val validateCoachSql = s"""
       SELECT user_id FROM authservice.user_table 
-      WHERE user_id = ? AND role = 'coach' AND status = 'ACTIVE'
+      WHERE user_id = ? AND role IN ('coach', '教练角色') AND status IN ('ACTIVE', 'active')
     """.stripMargin
 
     val validateCoachParams = List(SqlParameter("String", request.coachId))
@@ -139,7 +144,7 @@ class CoachStudentServiceImpl() extends CoachStudentService {
       // 验证教练
       coachExists <- DatabaseManager.executeQueryOptional(validateCoachSql, validateCoachParams)
       _ <- if (coachExists.isEmpty) {
-        IO.raiseError(new RuntimeException(s"教练不存在或状态无效: ${request.coachId}"))
+        IO.raiseError(new RuntimeException(s"教练不存在或状态无效: coachId=${request.coachId}。请检查教练是否存在、角色是否为教练、状态是否为活跃"))
       } else IO.unit
 
       // 检查关系是否已存在
@@ -197,7 +202,125 @@ class CoachStudentServiceImpl() extends CoachStudentService {
     } yield relationships
   }
 
+  override def getStudentsForCoach(coachUsername: String): IO[List[StudentForCoach]] = {
+    val sql = s"""
+      SELECT 
+        cms.id,
+        cms.student_id,
+        cms.student_username,
+        cms.student_name,
+        cms.created_at,
+        cu.phone as coach_phone,
+        cu.province_id,
+        cu.school_id
+      FROM authservice.coach_managed_students cms
+      LEFT JOIN authservice.user_table cu ON cms.coach_id = cu.user_id
+      WHERE cu.username = ?
+      ORDER BY cms.created_at DESC
+    """.stripMargin
+
+    val params = List(SqlParameter("String", coachUsername))
+
+    for {
+      results <- DatabaseManager.executeQuery(sql, params)
+      students = results.map(convertToStudentForCoach)
+    } yield students
+  }
+
+  override def updateCoachManagedStudent(studentId: String, coachUsername: String, updateData: Map[String, String]): IO[Unit] = {
+    // 目前只支持状态更新，可以根据需要扩展
+    val status = updateData.getOrElse("status", "active")
+    
+    val sql = s"""
+      UPDATE authservice.coach_managed_students 
+      SET student_name = COALESCE(?, student_name)
+      WHERE student_id = ? AND coach_id = (
+        SELECT user_id FROM authservice.user_table WHERE username = ?
+      )
+    """.stripMargin
+
+    val params = List(
+      SqlParameter("String", updateData.get("name").orNull),
+      SqlParameter("String", studentId),
+      SqlParameter("String", coachUsername)
+    )
+
+    for {
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException(s"学生不存在: $studentId"))
+      } else {
+        IO.unit
+      }
+      _ = logger.info(s"更新教练管理的学生: studentId=$studentId")
+    } yield ()
+  }
+
+  override def deleteCoachManagedStudent(studentId: String, coachUsername: String): IO[Unit] = {
+    val sql = s"""
+      DELETE FROM authservice.coach_managed_students 
+      WHERE student_id = ? AND coach_id = (
+        SELECT user_id FROM authservice.user_table WHERE username = ?
+      )
+    """.stripMargin
+
+    val params = List(
+      SqlParameter("String", studentId),
+      SqlParameter("String", coachUsername)
+    )
+
+    for {
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException(s"未找到要删除的学生记录: $studentId"))
+      } else {
+        IO.unit
+      }
+      _ = logger.info(s"删除教练管理的学生: studentId=$studentId, coachUsername=$coachUsername")
+    } yield ()
+  }
+
+  override def deleteCoachManagedStudentByStudentId(studentId: String): IO[Unit] = {
+    val sql = s"""
+      DELETE FROM authservice.coach_managed_students 
+      WHERE student_id = ?
+    """.stripMargin
+
+    val params = List(SqlParameter("String", studentId))
+
+    for {
+      rowsAffected <- DatabaseManager.executeUpdate(sql, params)
+      _ <- if (rowsAffected == 0) {
+        IO.raiseError(new RuntimeException(s"未找到要删除的学生记录: $studentId"))
+      } else {
+        IO.unit
+      }
+      _ = logger.info(s"删除教练管理的学生: studentId=$studentId")
+    } yield ()
+  }
+
   private def convertToCoachStudentRelationship(json: io.circe.Json): CoachStudentRelationship = {
+    // 手动解析created_at字段
+    val createdAtStr = json.hcursor.downField("created_at").as[String] match {
+      case Right(timeStr) => 
+        try {
+          // 尝试解析不同的时间格式
+          if (timeStr.contains('T')) {
+            LocalDateTime.parse(timeStr)
+          } else {
+            // 处理 "2025-07-06 13:34:47.5232" 格式
+            val cleanTimeStr = if (timeStr.contains('.')) {
+              // 移除微秒部分，保留到秒
+              timeStr.substring(0, timeStr.indexOf('.'))
+            } else timeStr
+            LocalDateTime.parse(cleanTimeStr.replace(' ', 'T'))
+          }
+        } catch {
+          case _: Exception => LocalDateTime.now()
+        }
+      case Left(_) => LocalDateTime.now()
+    }
+    
     CoachStudentRelationship(
       id = DatabaseManager.decodeFieldUnsafe[String](json, "id"),
       coachId = DatabaseManager.decodeFieldUnsafe[String](json, "coach_id"),
@@ -206,7 +329,26 @@ class CoachStudentServiceImpl() extends CoachStudentService {
       studentId = DatabaseManager.decodeFieldUnsafe[String](json, "student_id"),
       studentUsername = DatabaseManager.decodeFieldUnsafe[String](json, "student_username"),
       studentName = DatabaseManager.decodeFieldOptional[String](json, "student_name"),
-      createdAt = DatabaseManager.decodeFieldUnsafe[LocalDateTime](json, "created_at")
+      createdAt = createdAtStr
+    )
+  }
+
+  private def convertToStudentForCoach(json: io.circe.Json): StudentForCoach = {
+    // 手动解析created_at字段，因为数据库返回的格式可能不是标准的LocalDateTime格式
+    val createdAtStr = json.hcursor.downField("created_at").as[String] match {
+      case Right(timeStr) => timeStr
+      case Left(_) => LocalDateTime.now().toString
+    }
+    
+    StudentForCoach(
+      id = DatabaseManager.decodeFieldUnsafe[String](json, "student_id"),
+      name = DatabaseManager.decodeFieldOptional[String](json, "student_name").getOrElse(""),
+      username = DatabaseManager.decodeFieldUnsafe[String](json, "student_username"),
+      phone = DatabaseManager.decodeFieldOptional[String](json, "coach_phone").getOrElse(""), // 使用教练的电话
+      province = DatabaseManager.decodeFieldOptional[String](json, "province_id").getOrElse(""), // 教练的省份ID
+      school = DatabaseManager.decodeFieldOptional[String](json, "school_id").getOrElse(""), // 教练的学校ID
+      status = "active", // 教练管理的学生默认为活跃状态
+      createdAt = createdAtStr
     )
   }
 }

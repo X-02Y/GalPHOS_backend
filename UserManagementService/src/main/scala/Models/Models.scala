@@ -228,6 +228,18 @@ case class CoachManagedStudent(
   createdAt: LocalDateTime
 )
 
+// 前端期望的学生数据结构（用于教练管理学生列表）
+case class StudentForCoach(
+  id: String,
+  name: String,
+  username: String,
+  phone: String,
+  province: String,
+  school: String,
+  status: String,
+  createdAt: String
+)
+
 // 已审核用户列表响应
 case class ApprovedUsersResponse(
   users: List[ApprovedUserDto],
