@@ -6,6 +6,7 @@ import Database.DatabaseUtils
 import java.time.LocalDateTime
 import java.util.UUID
 import java.sql.ResultSet
+import org.slf4j.LoggerFactory
 
 trait ExamService {
   def getExamList(): IO[List[ExamListResponse]]
@@ -35,6 +36,7 @@ trait ExamService {
 }
 
 class ExamServiceImpl extends ExamService {
+  private val logger = LoggerFactory.getLogger("ExamService")
 
   override def getExamList(): IO[List[ExamListResponse]] = {
     val sql = """
@@ -400,6 +402,8 @@ class ExamServiceImpl extends ExamService {
     mimeType: String,
     uploadedBy: String
   ): IO[Boolean] = {
+    logger.info(s"Saving exam file: examId=$examId, fileId=$fileId, fileName=$fileName, fileType=$fileType")
+    
     // First, delete any existing file of the same type for this exam
     val deleteSql = """
       DELETE FROM exam_files 
@@ -424,9 +428,17 @@ class ExamServiceImpl extends ExamService {
       uploadedBy
     )
 
-    for {
-      _ <- DatabaseUtils.executeUpdate(deleteSql, deleteParams)
-      rows <- DatabaseUtils.executeUpdate(insertSql, insertParams)
-    } yield rows > 0
+    logger.info(s"Executing delete with params: $deleteParams")
+    logger.info(s"Executing insert with params: $insertParams")
+
+    (for {
+      deleteResult <- DatabaseUtils.executeUpdate(deleteSql, deleteParams)
+      _ = logger.info(s"Delete result: $deleteResult rows affected")
+      insertResult <- DatabaseUtils.executeUpdate(insertSql, insertParams)
+      _ = logger.info(s"Insert result: $insertResult rows affected")
+    } yield insertResult > 0).handleErrorWith { error =>
+      logger.error(s"Error saving exam file: ${error.getMessage}", error)
+      IO.raiseError(error)
+    }
   }
 }
