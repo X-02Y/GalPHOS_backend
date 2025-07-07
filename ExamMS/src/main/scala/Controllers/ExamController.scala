@@ -137,7 +137,9 @@ class ExamController(
 
     // 获取提交状态
     case req @ GET -> Root / "api" / "student" / "exams" / examId / "submission" =>
+      logger.info(s"Received GET request for submission status: examId = $examId")
       authenticateStudent(req) { user =>
+        logger.info(s"Authentication successful for student: ${user.username}, proceeding to get submission status")
         handleGetSubmissionStatus(examId, user.username)
       }.map(_.withHeaders(corsHeaders))
 
@@ -218,6 +220,11 @@ class ExamController(
     // 健康检查
     case GET -> Root / "health" =>
       Ok(ApiResponse.success("OK")).map(_.withHeaders(corsHeaders))
+      
+    // 捕获所有未匹配的请求用于调试
+    case req =>
+      logger.warn(s"Unmatched request: ${req.method} ${req.uri}")
+      NotFound(ApiResponse.error(s"路径不存在: ${req.method} ${req.uri}")).map(_.withHeaders(corsHeaders))
   }
 
   // 认证辅助方法
@@ -282,7 +289,7 @@ class ExamController(
 
   // 处理方法实现
   private def handleGetExamList(): IO[Response[IO]] = {
-    examService.getExamList().flatMap { exams =>
+    examService.getExamsForAdmin().flatMap { exams =>
       Ok(ApiResponse.success(exams, "考试列表获取成功"))
     }.handleErrorWith { error =>
       logger.error("获取考试列表失败", error)
@@ -384,7 +391,10 @@ class ExamController(
 
   private def handlePublishExam(req: Request[IO], examId: String): IO[Response[IO]] = {
     for {
-      request <- req.as[PublishExamRequest]
+      request <- req.attemptAs[PublishExamRequest].value.map {
+        case Right(r) => r
+        case Left(_) => PublishExamRequest() // Use default values when body is empty or invalid
+      }
       published <- examService.publishExam(examId, request)
       response <- if (published) {
         Ok(ApiResponse.success("", "考试发布成功"))
@@ -464,11 +474,16 @@ class ExamController(
   }
 
   private def handleGetSubmissionStatus(examId: String, studentUsername: String): IO[Response[IO]] = {
+    logger.info(s"handleGetSubmissionStatus called with examId: $examId, studentUsername: $studentUsername")
     submissionService.getSubmissionStatus(examId, studentUsername).flatMap {
-      case Some(submission) => Ok(ApiResponse.success(submission, "提交状态获取成功"))
-      case None => NotFound(ApiResponse.error("提交记录不存在"))
+      case Some(submission) => 
+        logger.info(s"Submission found: $submission")
+        Ok(ApiResponse.success(submission, "提交状态获取成功"))
+      case None => 
+        logger.info("No submission found, returning success with empty data")
+        Ok(ApiResponse.success("", "提交状态获取成功"))
     }.handleErrorWith { error =>
-      logger.error("获取提交状态失败", error)
+      logger.error(s"获取提交状态失败 for examId: $examId, studentUsername: $studentUsername", error)
       InternalServerError(ApiResponse.error("获取提交状态失败"))
     }
   }

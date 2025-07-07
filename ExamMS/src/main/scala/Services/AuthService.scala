@@ -117,6 +117,9 @@ class AuthServiceImpl(config: ServiceConfig) extends AuthService {
       case None => 
         logger.warn(s"No role found for user: $userId, defaulting to student role")
         "student" // Default to student role if lookup fails
+    }.handleErrorWith { error =>
+      logger.error(s"Database error while looking up role for user $userId, defaulting to student role", error)
+      IO.pure("student") // Default to student role if database lookup fails completely
     }
   }
 

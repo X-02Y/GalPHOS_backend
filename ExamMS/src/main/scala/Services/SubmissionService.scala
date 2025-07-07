@@ -6,6 +6,7 @@ import Models.*
 import Database.DatabaseUtils
 import java.time.LocalDateTime
 import java.sql.ResultSet
+import org.slf4j.LoggerFactory
 
 trait SubmissionService {
   def submitAnswers(examId: String, studentUsername: String, request: SubmitAnswersRequest, submittedBy: Option[String] = None): IO[ExamSubmission]
@@ -18,6 +19,7 @@ trait SubmissionService {
 }
 
 class SubmissionServiceImpl extends SubmissionService {
+  private val logger = LoggerFactory.getLogger(getClass)
 
   override def submitAnswers(examId: String, studentUsername: String, request: SubmitAnswersRequest, submittedBy: Option[String] = None): IO[ExamSubmission] = {
     for {
@@ -45,20 +47,27 @@ class SubmissionServiceImpl extends SubmissionService {
   }
 
   override def getSubmissionStatus(examId: String, studentUsername: String): IO[Option[ExamSubmission]] = {
+    logger.info(s"Getting submission status for examId: $examId, studentUsername: $studentUsername")
     val sql = """
       SELECT s.id, s.exam_id, s.student_username, s.submitted_by, s.submitted_at, 
              s.status, s.total_score, s.rank_position
       FROM exam_submissions s
-      WHERE s.exam_id = ? AND s.student_username = ?
+      WHERE s.exam_id = ?::uuid AND s.student_username = ?
     """
 
     for {
+      _ <- IO(logger.info(s"Executing SQL: $sql with params: [$examId, $studentUsername]"))
       submissionOpt <- DatabaseUtils.executeQuerySingle(sql, List(examId, studentUsername))(parseSubmissionBase)
+      _ <- IO(logger.info(s"Database query result: $submissionOpt"))
       submission <- submissionOpt match {
         case Some(sub) => 
+          logger.info(s"Found submission, getting answers for submission ID: ${sub.id}")
           getAnswersBySubmission(sub.id).map(answers => Some(sub.copy(answers = answers)))
-        case None => IO.pure(None)
+        case None => 
+          logger.info("No submission found")
+          IO.pure(None)
       }
+      _ <- IO(logger.info(s"Final submission result: $submission"))
     } yield submission
   }
 
@@ -67,7 +76,7 @@ class SubmissionServiceImpl extends SubmissionService {
       SELECT s.id, s.exam_id, s.student_username, s.submitted_by, s.submitted_at, 
              s.status, s.total_score, s.rank_position
       FROM exam_submissions s
-      WHERE s.exam_id = ?
+      WHERE s.exam_id = ?::uuid
       ORDER BY s.submitted_at DESC
     """
 
@@ -101,7 +110,7 @@ class SubmissionServiceImpl extends SubmissionService {
       SELECT s.id, s.exam_id, s.student_username, s.submitted_by, s.submitted_at, 
              s.status, s.total_score, s.rank_position
       FROM exam_submissions s
-      WHERE s.exam_id = ? AND s.submitted_by = ?
+      WHERE s.exam_id = ?::uuid AND s.submitted_by = ?
       ORDER BY s.submitted_at DESC
     """
 
@@ -117,7 +126,7 @@ class SubmissionServiceImpl extends SubmissionService {
     val sql = """
       UPDATE exam_submissions 
       SET total_score = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
+      WHERE id = ?::uuid
     """
 
     DatabaseUtils.executeUpdate(sql, List(score, SubmissionStatus.Graded.value, submissionId)).map(_ > 0)
@@ -128,7 +137,7 @@ class SubmissionServiceImpl extends SubmissionService {
       SELECT s.id, s.exam_id, s.student_username, s.submitted_by, s.submitted_at, 
              s.status, s.total_score, s.rank_position
       FROM exam_submissions s
-      WHERE s.id = ?
+      WHERE s.id = ?::uuid
     """
 
     for {
@@ -144,7 +153,7 @@ class SubmissionServiceImpl extends SubmissionService {
   private def createNewSubmission(examId: String, studentUsername: String, submittedBy: Option[String]): IO[String] = {
     val sql = """
       INSERT INTO exam_submissions (exam_id, student_username, submitted_by, status)
-      VALUES (?, ?, ?, ?)
+      VALUES (?::uuid, ?, ?, ?)
     """
 
     val params = List(examId, studentUsername, submittedBy.orNull, SubmissionStatus.Submitted.value)
@@ -154,14 +163,14 @@ class SubmissionServiceImpl extends SubmissionService {
   private def updateSubmissionAnswers(submissionId: String, answers: List[ExamAnswer]): IO[Unit] = {
     for {
       // 删除现有答案
-      _ <- DatabaseUtils.executeUpdate("DELETE FROM exam_answers WHERE submission_id = ?", List(submissionId))
+      _ <- DatabaseUtils.executeUpdate("DELETE FROM exam_answers WHERE submission_id = ?::uuid", List(submissionId))
       
       // 插入新答案
       _ <- insertAnswers(submissionId, answers)
       
       // 更新提交时间
       _ <- DatabaseUtils.executeUpdate(
-        "UPDATE exam_submissions SET submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE exam_submissions SET submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?::uuid",
         List(submissionId)
       )
     } yield ()
@@ -170,7 +179,7 @@ class SubmissionServiceImpl extends SubmissionService {
   private def insertAnswers(submissionId: String, answers: List[ExamAnswer]): IO[Unit] = {
     val sql = """
       INSERT INTO exam_answers (submission_id, question_number, answer_image_url, upload_time)
-      VALUES (?, ?, ?, ?)
+      VALUES (?::uuid, ?, ?, ?)
     """
 
     answers.traverse { answer =>
@@ -183,7 +192,7 @@ class SubmissionServiceImpl extends SubmissionService {
     val sql = """
       SELECT question_number, answer_image_url, upload_time
       FROM exam_answers
-      WHERE submission_id = ?
+      WHERE submission_id = ?::uuid
       ORDER BY question_number
     """
 
