@@ -33,18 +33,13 @@ class FileStorageServiceImpl(config: ServiceConfig, client: Client[IO]) extends 
     logger.info(s"[FileStorageService] File name: ${request.originalName}")
     logger.info(s"[FileStorageService] FileStorage URL: $url")
     logger.info(s"[FileStorageService] Request details - examId: ${request.examId}, fileType: ${request.fileType}")
-    logger.info(s"[FileStorageService] File content size: ${request.fileContent.length} integers")
+    logger.info(s"[FileStorageService] File content (Base64) length: ${request.fileContent.length} characters")
     logger.info(s"[FileStorageService] Upload user: ${request.uploadUserId} (${request.uploadUserType})")
     
-    // Convert List[Int] to Array[Byte] for compatibility with FileStorageService
-    val fileContentBytes = request.fileContent.map(_.toByte).toArray
-    
-    logger.info(s"[FileStorageService] Converted to byte array size: ${fileContentBytes.length}")
-    
-    // Create InternalFileUploadRequest for FileStorageService
+    // Create InternalFileUploadRequest for FileStorageService with Base64 content
     val internalRequest = InternalFileUploadRequest(
       originalName = request.originalName,
-      fileContent = fileContentBytes,
+      fileContent = request.fileContent, // Pass Base64 string directly
       fileType = request.fileType,
       mimeType = request.mimeType,
       uploadUserId = Some(request.uploadUserId),

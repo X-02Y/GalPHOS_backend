@@ -1,36 +1,29 @@
 @echo off
-echo 启动答题提交服务...
+echo Starting SubmissionService...
+echo.
 
-:: 检查Java环境
-java -version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo 错误: 未找到Java环境，请先安装Java 11+
+echo Checking if PostgreSQL is running...
+tasklist /FI "IMAGENAME eq postgres.exe" 2>NUL | find /I /N "postgres.exe">NUL
+if "%ERRORLEVEL%"=="0" (
+    echo PostgreSQL is running.
+) else (
+    echo Warning: PostgreSQL is not running. Please start PostgreSQL first.
+    echo You can start it with: net start postgresql-x64-14
     pause
     exit /b 1
 )
 
-:: 检查SBT环境
-sbt --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo 错误: 未找到SBT环境，请先安装SBT
+echo.
+echo Compiling and starting the service...
+sbt "runMain Main.SubmissionServiceApp"
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo Error: Failed to start SubmissionService
     pause
     exit /b 1
 )
 
-:: 创建日志目录
-if not exist "logs" mkdir logs
-
-:: 检查配置文件
-if not exist "server_config.json" (
-    echo 错误: 找不到配置文件 server_config.json
-    pause
-    exit /b 1
-)
-
-echo 正在启动答题提交服务...
-echo 服务将在端口 3004 上运行
-echo 按 Ctrl+C 停止服务
-
-sbt "run"
-
+echo.
+echo SubmissionService stopped
 pause

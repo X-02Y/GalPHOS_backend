@@ -2,119 +2,178 @@ package Services
 
 import cats.effect.IO
 import cats.implicits.*
-import sttp.client3.*
-import sttp.client3.circe.*
-import sttp.client3.asynchttpclient.cats.AsyncHttpClientCatsBackend
+import org.http4s.*
+import org.http4s.client.Client
+import org.http4s.circe.*
+import org.http4s.headers.*
 import io.circe.generic.auto.*
-import org.slf4j.LoggerFactory
-import Config.ServerConfig
+import io.circe.parser.*
+import io.circe.syntax.*
 import Models.*
-import org.apache.commons.io.IOUtils
-import java.io.{File, FileInputStream}
-import java.nio.file.{Files, Paths}
-import java.util.Base64
+import Config.ServiceConfig
+import org.slf4j.LoggerFactory
+import fs2.Stream
+import java.time.LocalDateTime
 
-class FileStorageService(config: ServerConfig) {
-  private val logger = LoggerFactory.getLogger("FileStorageService")
-  private val backend = AsyncHttpClientCatsBackend[IO]()
-  private val fileServiceUrl = config.fileStorageServiceUrl
-
-  case class FileUploadResponse(
-    success: Boolean,
-    data: Option[FileUploadData] = None,
-    error: Option[String] = None
-  )
-
-  case class FileUploadData(
-    fileId: String,
+trait FileStorageService {
+  def uploadAnswerImage(
+    fileBytes: Array[Byte],
     fileName: String,
-    fileUrl: String,
-    fileSize: Long
-  )
-
-  def uploadFile(
-    fileContent: Array[Byte],
-    originalName: String,
-    fileType: String,
-    uploadUserId: String,
-    uploadUserType: String,
     examId: String,
-    description: String,
-    token: String
-  ): IO[Either[String, FileUploadData]] = {
-    val encodedContent = Base64.getEncoder.encodeToString(fileContent)
+    questionNumber: Int,
+    studentUsername: Option[String] = None
+  ): IO[Either[ServiceError, FileUploadResponse]]
+  
+  def getFileUrl(fileId: String): IO[Either[ServiceError, String]]
+  def deleteFile(fileId: String): IO[Either[ServiceError, Boolean]]
+}
+
+class FileStorageServiceImpl(config: ServiceConfig, client: Client[IO]) extends FileStorageService {
+  private val logger = LoggerFactory.getLogger("FileStorageServiceImpl")
+  
+  private val baseUrl = s"http://${config.fileStorageService.host}:${config.fileStorageService.port}"
+
+  override def uploadAnswerImage(
+    fileBytes: Array[Byte],
+    fileName: String,
+    examId: String,
+    questionNumber: Int,
+    studentUsername: Option[String] = None
+  ): IO[Either[ServiceError, FileUploadResponse]] = {
     
-    val uploadRequest = Map(
-      "originalName" -> originalName,
-      "fileContent" -> encodedContent,
-      "fileType" -> fileType,
-      "mimeType" -> getMimeType(fileType),
-      "uploadUserId" -> uploadUserId,
-      "uploadUserType" -> uploadUserType,
-      "examId" -> examId,
-      "description" -> description,
-      "category" -> "submission"
+    val uploadEndpoint = studentUsername match {
+      case Some(username) => s"$baseUrl/api/coach/exams/$examId/upload-answer"
+      case None => s"$baseUrl/api/student/upload/answer-image"
+    }
+
+    // Create JSON payload for file upload
+    val uploadData = Map(
+      "fileName" -> fileName,
+      "fileData" -> java.util.Base64.getEncoder.encodeToString(fileBytes),
+      "category" -> "answer-image",
+      "relatedId" -> examId,
+      "questionNumber" -> questionNumber.toString,
+      "timestamp" -> LocalDateTime.now().toString
+    ) ++ studentUsername.map("studentUsername" -> _).toMap
+
+    val request = Request[IO](
+      method = Method.POST,
+      uri = Uri.unsafeFromString(uploadEndpoint),
+      headers = Headers(
+        Authorization(Credentials.Token(AuthScheme.Bearer, config.fileStorageService.internalApiKey)),
+        `Content-Type`(MediaType.application.json)
+      )
+    ).withEntity(uploadData.asJson)
+
+    client.expect[String](request).attempt.flatMap {
+      case Right(response) =>
+        IO {
+          decode[ApiResponse[FileUploadResponse]](response) match {
+            case Right(apiResponse) if apiResponse.success =>
+              apiResponse.data match {
+                case Some(fileResponse) => Right(fileResponse)
+                case None => Left(ServiceError.internalError("No file data returned"))
+              }
+            case Right(apiResponse) =>
+              Left(ServiceError.badRequest(apiResponse.message.getOrElse("File upload failed")))
+            case Left(error) =>
+              logger.error(s"Failed to parse file upload response: $error")
+              Left(ServiceError.internalError("Failed to parse upload response"))
+          }
+        }
+      case Left(error) =>
+        logger.error(s"File upload failed: $error")
+        IO.pure(Left(ServiceError.internalError("File upload service unavailable")))
+    }
+  }
+
+  override def getFileUrl(fileId: String): IO[Either[ServiceError, String]] = {
+    val uri = Uri.unsafeFromString(s"$baseUrl/api/files/$fileId/url")
+    
+    val request = Request[IO](
+      method = Method.GET,
+      uri = uri,
+      headers = Headers(
+        Authorization(Credentials.Token(AuthScheme.Bearer, config.fileStorageService.internalApiKey))
+      )
     )
 
-    val request = basicRequest
-      .post(uri"$fileServiceUrl/api/internal/upload")
-      .header("Authorization", s"Bearer $token")
-      .header("Content-Type", "application/json")
-      .body(uploadRequest)
-      .response(asJson[FileUploadResponse])
-
-    backend.flatMap { implicit b =>
-      request.send(b).map(_.body match {
-        case Right(response) if response.success =>
-          response.data match {
-            case Some(data) => Right(data)
-            case None => Left("文件上传响应异常")
+    client.expect[String](request).attempt.flatMap {
+      case Right(response) =>
+        IO {
+          decode[ApiResponse[Map[String, String]]](response) match {
+            case Right(apiResponse) if apiResponse.success =>
+              apiResponse.data.flatMap(_.get("url")) match {
+                case Some(url) => Right(url)
+                case None => Left(ServiceError.notFound("File URL not found"))
+              }
+            case Right(apiResponse) =>
+              Left(ServiceError.badRequest(apiResponse.message.getOrElse("Failed to get file URL")))
+            case Left(error) =>
+              logger.error(s"Failed to parse file URL response: $error")
+              Left(ServiceError.internalError("Failed to parse URL response"))
           }
-        case Right(response) => Left(response.error.getOrElse("文件上传失败"))
-        case Left(error) => Left(s"文件服务通信失败: ${error.getMessage}")
-      })
-    }.handleErrorWith { error =>
-      logger.error("文件上传失败", error)
-      IO.pure(Left(s"文件服务不可用: ${error.getMessage}"))
+        }
+      case Left(error) =>
+        logger.error(s"Failed to get file URL: $error")
+        IO.pure(Left(ServiceError.internalError("File storage service unavailable")))
     }
   }
 
-  def getFileUrl(fileId: String, token: String): IO[Either[String, String]] = {
-    val request = basicRequest
-      .get(uri"$fileServiceUrl/api/internal/files/$fileId/url")
-      .header("Authorization", s"Bearer $token")
-      .response(asJson[ApiResponse[Map[String, String]]])
+  override def deleteFile(fileId: String): IO[Either[ServiceError, Boolean]] = {
+    val uri = Uri.unsafeFromString(s"$baseUrl/api/files/$fileId")
+    
+    val request = Request[IO](
+      method = Method.DELETE,
+      uri = uri,
+      headers = Headers(
+        Authorization(Credentials.Token(AuthScheme.Bearer, config.fileStorageService.internalApiKey))
+      )
+    )
 
-    backend.flatMap { implicit b =>
-      request.send(b).map(_.body match {
-        case Right(response) if response.success =>
-          response.data.flatMap(_.get("url")) match {
-            case Some(url) => Right(url)
-            case None => Left("获取文件URL失败")
+    client.expect[String](request).attempt.flatMap {
+      case Right(response) =>
+        IO {
+          decode[ApiResponse[String]](response) match {
+            case Right(apiResponse) => Right(apiResponse.success)
+            case Left(error) =>
+              logger.error(s"Failed to parse file delete response: $error")
+              Left(ServiceError.internalError("Failed to parse delete response"))
           }
-        case Right(response) => Left(response.message.getOrElse("获取文件URL失败"))
-        case Left(error) => Left(s"文件服务通信失败: ${error.getMessage}")
-      })
-    }.handleErrorWith { error =>
-      logger.error(s"获取文件URL失败: fileId=$fileId", error)
-      IO.pure(Left(s"文件服务不可用: ${error.getMessage}"))
+        }
+      case Left(error) =>
+        logger.error(s"Failed to delete file: $error")
+        IO.pure(Left(ServiceError.internalError("File storage service unavailable")))
     }
   }
+}
 
-  private def getMimeType(fileType: String): String = {
-    fileType.toLowerCase match {
-      case "jpg" | "jpeg" => "image/jpeg"
-      case "png" => "image/png"
-      case "pdf" => "application/pdf"
-      case _ => "application/octet-stream"
-    }
+// Mock implementation for testing
+class MockFileStorageService extends FileStorageService {
+  private val logger = LoggerFactory.getLogger("MockFileStorageService")
+
+  override def uploadAnswerImage(
+    fileBytes: Array[Byte],
+    fileName: String,
+    examId: String,
+    questionNumber: Int,
+    studentUsername: Option[String] = None
+  ): IO[Either[ServiceError, FileUploadResponse]] = {
+    IO.pure(Right(FileUploadResponse(
+      fileId = s"file-${java.util.UUID.randomUUID()}",
+      fileName = fileName,
+      fileUrl = s"http://localhost:3008/files/$fileName",
+      fileSize = fileBytes.length,
+      fileType = "image/jpeg",
+      uploadTime = LocalDateTime.now()
+    )))
   }
 
-  def validateFileType(fileType: String): Boolean = {
-    config.allowedFileTypes.contains(fileType.toLowerCase)
+  override def getFileUrl(fileId: String): IO[Either[ServiceError, String]] = {
+    IO.pure(Right(s"http://localhost:3008/files/$fileId"))
   }
 
-  def validateFileSize(fileSize: Long): Boolean = {
-    fileSize <= config.maxFileSize
+  override def deleteFile(fileId: String): IO[Either[ServiceError, Boolean]] = {
+    IO.pure(Right(true))
   }
 }

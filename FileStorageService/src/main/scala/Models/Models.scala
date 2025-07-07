@@ -181,7 +181,7 @@ case class UserClaims(
 // Internal file transfer models (for microservice communication)
 case class InternalFileUploadRequest(
   originalName: String,
-  fileContent: Array[Byte],
+  fileContent: String, // Base64 encoded file content for JSON serialization
   fileType: String,
   mimeType: String,
   uploadUserId: Option[String] = None,
