@@ -174,11 +174,49 @@ case class GradingImage(
   uploadTime: LocalDateTime
 )
 
+// 带内容的阅卷图片信息
+case class GradingImageWithContent(
+  imageUrl: String,
+  fileName: String,
+  examId: Long,
+  studentId: Long,
+  questionNumber: Int,
+  uploadTime: LocalDateTime,
+  base64Content: Option[String]
+)
+
 // 图片查询请求
 case class ImageQueryRequest(
   examId: Long,
   studentId: Option[Long] = None,
   questionNumber: Option[Int] = None
+)
+
+// 外部服务数据模型
+case class ExamData(
+  id: Long,
+  title: String,
+  description: Option[String],
+  questionCount: Option[Int],
+  createdAt: String
+)
+
+case class FileStorageImage(
+  id: String,
+  fileName: String,
+  fileUrl: String,
+  examId: Long,
+  studentId: Long,
+  questionNumber: Int,
+  uploadTime: String,
+  fileSize: Option[Long],
+  contentType: Option[String]
+)
+
+case class ExternalApiResponse[T](
+  success: Boolean,
+  message: String,
+  data: Option[T] = None
 )
 
 // 隐式JSON编解码器
@@ -231,8 +269,21 @@ object Implicits {
   implicit val gradingImageEncoder: Encoder[GradingImage] = deriveEncoder[GradingImage]
   implicit val gradingImageDecoder: Decoder[GradingImage] = deriveDecoder[GradingImage]
 
+  implicit val gradingImageWithContentEncoder: Encoder[GradingImageWithContent] = deriveEncoder[GradingImageWithContent]
+  implicit val gradingImageWithContentDecoder: Decoder[GradingImageWithContent] = deriveDecoder[GradingImageWithContent]
+
   implicit val imageQueryRequestEncoder: Encoder[ImageQueryRequest] = deriveEncoder[ImageQueryRequest]
   implicit val imageQueryRequestDecoder: Decoder[ImageQueryRequest] = deriveDecoder[ImageQueryRequest]
+  
+  // 外部服务模型编解码器
+  implicit val examDataEncoder: Encoder[ExamData] = deriveEncoder[ExamData]
+  implicit val examDataDecoder: Decoder[ExamData] = deriveDecoder[ExamData]
+  
+  implicit val fileStorageImageEncoder: Encoder[FileStorageImage] = deriveEncoder[FileStorageImage]
+  implicit val fileStorageImageDecoder: Decoder[FileStorageImage] = deriveDecoder[FileStorageImage]
+  
+  implicit def externalApiResponseEncoder[T: Encoder]: Encoder[ExternalApiResponse[T]] = deriveEncoder[ExternalApiResponse[T]]
+  implicit def externalApiResponseDecoder[T: Decoder]: Decoder[ExternalApiResponse[T]] = deriveDecoder[ExternalApiResponse[T]]
   
   implicit def apiResponseEncoder[T: Encoder]: Encoder[ApiResponse[T]] = deriveEncoder[ApiResponse[T]]
   implicit def apiResponseDecoder[T: Decoder]: Decoder[ApiResponse[T]] = deriveDecoder[ApiResponse[T]]

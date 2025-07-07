@@ -1,6 +1,10 @@
 -- 考试管理服务数据库初始化脚本
 -- 创建考试管理相关的表结构
 
+-- 创建schema
+CREATE SCHEMA IF NOT EXISTS examservice;
+SET search_path TO examservice;
+
 -- 创建考试表
 CREATE TABLE IF NOT EXISTS exams (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -14,6 +18,7 @@ CREATE TABLE IF NOT EXISTS exams (
     created_by VARCHAR(100) NOT NULL,
     duration INTEGER, -- 考试时长（分钟）
     total_questions INTEGER,
+    total_score DECIMAL(10,2),
     max_score DECIMAL(10,2),
     subject VARCHAR(100),
     instructions TEXT,
@@ -161,16 +166,16 @@ CREATE TRIGGER update_exam_answers_updated_at BEFORE UPDATE ON exam_answers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 插入默认数据
-INSERT INTO exams (title, description, start_time, end_time, status, created_by, duration, total_questions, max_score, subject)
+INSERT INTO exams (title, description, start_time, end_time, status, created_by, duration, total_questions, total_score, max_score, subject)
 VALUES 
     ('示例物理考试', '这是一个示例物理考试', 
      CURRENT_TIMESTAMP + INTERVAL '1 day', 
      CURRENT_TIMESTAMP + INTERVAL '1 day' + INTERVAL '3 hours', 
-     'draft', 'admin', 180, 20, 100.0, '物理'),
+     'draft', 'admin', 180, 20, 100.0, 100.0, '物理'),
     ('示例数学考试', '这是一个示例数学考试', 
      CURRENT_TIMESTAMP + INTERVAL '2 days', 
      CURRENT_TIMESTAMP + INTERVAL '2 days' + INTERVAL '2 hours', 
-     'draft', 'admin', 120, 15, 75.0, '数学')
+     'draft', 'admin', 120, 15, 75.0, 75.0, '数学')
 ON CONFLICT DO NOTHING;
 
 COMMIT;

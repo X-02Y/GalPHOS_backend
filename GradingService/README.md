@@ -320,3 +320,70 @@ grep ERROR logs/grading-service.log
 ## 联系信息
 
 如有问题或建议，请联系开发团队。
+
+## 微服务集成
+
+### 外部服务调用
+本服务集成了以下外部微服务：
+
+#### 1. ExamMS (考试管理服务)
+- **用途**: 获取考试信息和试题数据
+- **接口**: 
+  - `GET /api/exams/{examId}` - 获取考试详情
+  - `GET /api/exams?status=grading` - 获取可阅卷考试列表
+- **配置**: 环境变量 `EXAM_MS_URL` (默认: http://localhost:8081)
+
+#### 2. FileStorageService (文件存储服务)
+- **用途**: 获取学生答卷图片数据
+- **接口**:
+  - `GET /api/files/images?examId={examId}&studentId={studentId}&questionNumber={questionNumber}` - 获取图片列表
+  - `GET {imageUrl}` - 获取图片内容
+- **配置**: 环境变量 `FILE_STORAGE_URL` (默认: http://localhost:8083)
+
+### 阅卷图片管理功能
+新增的图片管理功能实现了以下特性：
+
+1. **智能图片获取**: 
+   - 优先从FileStorageService获取最新图片数据
+   - 自动同步图片元数据到本地数据库
+   - 提供本地数据库备用方案
+
+2. **权限验证**:
+   - 验证阅卷员是否有权限访问特定考试的图片
+   - 只允许分配了该考试任务的阅卷员访问图片
+
+3. **图片内容获取**:
+   - 支持获取图片的Base64编码内容
+   - 便于前端直接显示图片
+
+4. **查询参数支持**:
+   - `examId`: 必需，指定考试ID
+   - `studentId`: 可选，筛选特定学生的图片
+   - `questionNumber`: 可选，筛选特定题目的图片
+
+### API响应格式
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "imageUrl": "http://filestorage:8083/files/exam1/student1/q1/answer.jpg",
+      "fileName": "answer.jpg",
+      "examId": "1",
+      "studentId": "1",
+      "questionNumber": 1,
+      "uploadTime": "2024-03-15T10:30:00",
+      "base64Content": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ..."
+    }
+  ],
+  "message": "获取阅卷图片成功"
+}
+```
+
+### 服务启动依赖
+为确保服务正常运行，建议按以下顺序启动：
+1. ExamMS (端口 8081)
+2. FileStorageService (端口 8083)
+3. GradingService (端口 8085)
+
+**注意**: 如果ExamMS或FileStorageService不可用，GradingService仍可使用本地数据库提供基础功能。

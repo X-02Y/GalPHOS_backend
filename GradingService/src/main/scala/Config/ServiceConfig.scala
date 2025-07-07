@@ -47,7 +47,8 @@ case class ServiceConfig(
   isTest: Boolean,
   userManagementService: ExternalServiceConfig,
   examManagementService: ExternalServiceConfig,
-  submissionService: ExternalServiceConfig
+  submissionService: ExternalServiceConfig,
+  fileStorageService: ExternalServiceConfig
 ) {
   def toDatabaseConfig: DatabaseConfig = DatabaseConfig(
     jdbcUrl = jdbcUrl,
@@ -65,6 +66,10 @@ case class ServiceConfig(
     maximumServerConnection = maximumServerConnection,
     maximumClientConnection = maximumClientConnection
   )
+  
+  // 便捷方法获取外部服务URL
+  def examMSUrl: Option[String] = Some(s"http://${examManagementService.host}:${examManagementService.port}")
+  def fileStorageUrl: Option[String] = Some(s"http://${fileStorageService.host}:${fileStorageService.port}")
 }
 
 object ConfigLoader {

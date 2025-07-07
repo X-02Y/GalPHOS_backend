@@ -28,11 +28,12 @@ object GradingServiceApp extends IOApp {
       _ <- Init.initializeDatabase()
 
       // 创建服务实例
+      externalServiceClient = new ExternalServiceClient()
       graderService = new GraderService()
       gradingTaskService = new GradingTaskService()
       questionScoreService = new QuestionScoreService()
       coachStudentService = new CoachStudentService()
-      gradingImageService = new GradingImageService()
+      gradingImageService = new GradingImageService(externalServiceClient)
 
       // 创建控制器
       gradingController = new GradingController(

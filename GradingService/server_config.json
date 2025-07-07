@@ -33,5 +33,12 @@
     "internalApiKey": "internal-service-key-2024",
     "timeout": 30000,
     "healthCheckInterval": 30000
+  },
+  "fileStorageService": {
+    "host": "127.0.0.1",
+    "port": 3006,
+    "internalApiKey": "internal-service-key-2024",
+    "timeout": 30000,
+    "healthCheckInterval": 30000
   }
 }

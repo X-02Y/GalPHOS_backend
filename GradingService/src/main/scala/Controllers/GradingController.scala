@@ -331,24 +331,60 @@ class GradingController(
       }
 
     // 阅卷图片管理 - 获取阅卷图片
-    case GET -> Root / "api" / "grader" / "images" :? ExamIdQueryParam(examIdOpt) +& StudentIdQueryParam(studentIdOpt) +& QuestionNumberQueryParam(questionNumberOpt) =>
+    case req @ GET -> Root / "api" / "grader" / "images" :? ExamIdQueryParam(examIdOpt) +& StudentIdQueryParam(studentIdOpt) +& QuestionNumberQueryParam(questionNumberOpt) =>
       examIdOpt match {
         case Some(examId) =>
-          gradingImageService.getGradingImages(examId, studentIdOpt, questionNumberOpt).flatMap { images =>
-            Ok(ApiResponse(
-              success = true,
-              message = "获取阅卷图片成功",
-              data = Some(images)
-            ).asJson)
-          }.handleErrorWith { error =>
-            logger.error(s"获取阅卷图片失败 - examId:$examId", error)
-            InternalServerError(ApiResponse[List[GradingImage]](
-              success = false,
-              message = s"获取阅卷图片失败: ${error.getMessage}"
-            ).asJson)
+          // 从请求头获取阅卷员ID（实际项目中应该从JWT token解析）
+          val graderIdOpt = req.headers.get[org.http4s.headers.Authorization].flatMap { authHeader =>
+            // 这里应该解析JWT token获取graderId，暂时使用模拟值
+            Some(1L) // 模拟阅卷员ID
+          }
+          
+          graderIdOpt match {
+            case Some(graderId) =>
+              // 验证阅卷员权限
+              gradingImageService.validateGraderAccess(graderId, examId).flatMap { hasAccess =>
+                if (hasAccess) {
+                  // 获取图片数据（带内容）
+                  gradingImageService.getGradingImagesWithContent(examId, studentIdOpt, questionNumberOpt).flatMap { images =>
+                    logger.info(s"阅卷员 $graderId 获取了 ${images.length} 张阅卷图片")
+                    Ok(ApiResponse(
+                      success = true,
+                      message = "获取阅卷图片成功",
+                      data = Some(images.map { img =>
+                        Map(
+                          "imageUrl" -> img.imageUrl,
+                          "fileName" -> img.fileName,
+                          "examId" -> img.examId.toString,
+                          "studentId" -> img.studentId.toString,
+                          "questionNumber" -> img.questionNumber.toString,
+                          "uploadTime" -> img.uploadTime.toString,
+                          "base64Content" -> img.base64Content.getOrElse("")
+                        )
+                      })
+                    ).asJson)
+                  }.handleErrorWith { error =>
+                    logger.error(s"获取阅卷图片失败 - examId:$examId", error)
+                    InternalServerError(ApiResponse[List[Map[String, String]]](
+                      success = false,
+                      message = s"获取阅卷图片失败: ${error.getMessage}"
+                    ).asJson)
+                  }
+                } else {
+                  Forbidden(ApiResponse[List[Map[String, String]]](
+                    success = false,
+                    message = "无权限访问该考试的图片"
+                  ).asJson)
+                }
+              }
+            case None =>
+              Forbidden(ApiResponse[List[Map[String, String]]](
+                success = false,
+                message = "缺少认证信息"
+              ).asJson)
           }
         case None =>
-          BadRequest(ApiResponse[List[GradingImage]](
+          BadRequest(ApiResponse[List[Map[String, String]]](
             success = false,
             message = "缺少必需的examId参数"
           ).asJson)
