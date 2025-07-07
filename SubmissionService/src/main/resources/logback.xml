@@ -2,32 +2,41 @@
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/submission-service.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/submission-service.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>10MB</maxFileSize>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/submission-service.%d{yyyy-MM-dd}.gz</fileNamePattern>
             <maxHistory>30</maxHistory>
-            <totalSizeCap>300MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <logger name="SubmissionService" level="INFO"/>
-    <logger name="SubmissionController" level="INFO"/>
-    <logger name="DatabaseManager" level="INFO"/>
-    <logger name="AuthService" level="INFO"/>
-    <logger name="ExamService" level="INFO"/>
-    <logger name="FileStorageService" level="INFO"/>
-
+    <!-- Root logger -->
     <root level="INFO">
-        <appender-ref ref="STDOUT"/>
-        <appender-ref ref="FILE"/>
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
     </root>
+
+    <!-- Application loggers -->
+    <logger name="com.galphos" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+
+    <!-- HTTP4S loggers -->
+    <logger name="org.http4s" level="INFO" />
+    
+    <!-- Database loggers -->
+    <logger name="com.zaxxer.hikari" level="INFO" />
+    <logger name="Database" level="DEBUG" />
+    
+    <!-- Reduce noise from some libraries -->
+    <logger name="org.eclipse.jetty" level="WARN" />
+    <logger name="org.postgresql" level="WARN" />
 </configuration>

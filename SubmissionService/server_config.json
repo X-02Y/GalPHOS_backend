@@ -1,19 +1,39 @@
 {
-  "serverIP": "127.0.0.1",
+  "serverIP": "localhost",
   "serverPort": 3004,
-  "maximumServerConnection": 10000,
-  "maximumClientConnection": 10000,
-  "jdbcUrl": "jdbc:postgresql://localhost:5432/galphos?currentSchema=submissionservice",
+  "maximumServerConnection": 100,
+  "maximumClientConnection": 50,
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/submission_service?currentSchema=submissionservice",
   "username": "db",
   "password": "root",
   "prepStmtCacheSize": 250,
   "prepStmtCacheSqlLimit": 2048,
-  "maximumPoolSize": 10,
-  "connectionLiveMinutes": 10,
+  "maximumPoolSize": 20,
+  "connectionLiveMinutes": 30,
   "isTest": false,
-  "authServiceUrl": "http://localhost:3001",
-  "examServiceUrl": "http://localhost:3003",
-  "fileStorageServiceUrl": "http://localhost:3008",
-  "maxFileSize": 10485760,
-  "allowedFileTypes": ["jpg", "jpeg", "png", "pdf"]
+  "jwtSecret": "GalPHOS_2025_SECRET_KEY",
+  "jwtExpiration": 86400,
+  "fileStorageService": {
+    "host": "localhost",
+    "port": 3008,
+    "internalApiKey": "your-internal-api-key-here",
+    "timeout": 30000,
+    "uploadMaxSize": 52428800,
+    "allowedImageTypes": ["jpg", "jpeg", "png", "gif", "bmp", "webp"],
+    "allowedDocumentTypes": ["pdf", "doc", "docx", "txt", "rtf"]
+  },
+  "externalServices": {
+    "examService": {
+      "host": "localhost",
+      "port": 3003
+    },
+    "userManagementService": {
+      "host": "localhost",
+      "port": 3002
+    },
+    "authService": {
+      "host": "localhost",
+      "port": 3001
+    }
+  }
 }

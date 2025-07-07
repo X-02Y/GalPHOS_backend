@@ -1,31 +1,53 @@
 @echo off
-echo 设置答题提交服务数据库...
+echo Setting up SubmissionService Database...
+echo.
 
-:: 检查PostgreSQL环境
-psql --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo 错误: 未找到PostgreSQL客户端，请先安装PostgreSQL
+echo This script will create the database and schema for SubmissionService
+echo Make sure PostgreSQL is running before proceeding.
+echo.
+
+set /p PROCEED="Do you want to continue? (y/n): "
+if /i "%PROCEED%" neq "y" (
+    echo Cancelled.
     pause
-    exit /b 1
+    exit /b 0
 )
 
-:: 检查数据库初始化脚本
-if not exist "init_database.sql" (
-    echo 错误: 找不到数据库初始化脚本 init_database.sql
-    pause
-    exit /b 1
+echo.
+echo Connecting to PostgreSQL...
+
+rem Create database and user
+psql -U postgres -c "CREATE DATABASE submission_service;" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo Database may already exist, continuing...
 )
 
-echo 正在初始化答题提交服务数据库表...
-echo 连接数据库: galphos@localhost:5432
+psql -U postgres -c "CREATE USER db WITH PASSWORD 'root';" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo User may already exist, continuing...
+)
 
-:: 执行数据库初始化脚本
-psql -h localhost -U postgres -d galphos -f init_database.sql
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE submission_service TO db;" 2>nul
 
-if %errorlevel% equ 0 (
-    echo 数据库初始化成功！
+rem Initialize schema
+echo.
+echo Initializing database schema...
+psql -U db -d submission_service -f init_database.sql
+
+if %ERRORLEVEL% equ 0 (
+    echo.
+    echo Database setup completed successfully!
+    echo.
+    echo Database: submission_service
+    echo Username: db
+    echo Password: root
+    echo Schema: submissionservice
 ) else (
-    echo 数据库初始化失败！请检查数据库连接和权限。
+    echo.
+    echo Error: Database setup failed
+    pause
+    exit /b 1
 )
 
+echo.
 pause

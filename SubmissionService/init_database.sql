@@ -1,62 +1,62 @@
--- 创建答题提交服务数据库表
+-- SubmissionService Database Initialization Script
 
--- 考试提交记录表
-CREATE TABLE IF NOT EXISTS exam_submissions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    exam_id UUID NOT NULL,
-    student_id VARCHAR(255) NOT NULL,
-    student_username VARCHAR(255) NOT NULL,
-    coach_id VARCHAR(255),  -- 教练代理提交时的教练ID
-    is_proxy_submission BOOLEAN DEFAULT FALSE,  -- 是否为代理提交
-    submission_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    status VARCHAR(50) DEFAULT 'submitted',  -- submitted, graded, cancelled
+-- Create schema if not exists
+CREATE SCHEMA IF NOT EXISTS submissionservice;
+
+-- Set search path
+SET search_path TO submissionservice;
+
+-- Create submissions table
+CREATE TABLE IF NOT EXISTS submissions (
+    id VARCHAR(36) PRIMARY KEY,
+    exam_id VARCHAR(36) NOT NULL,
+    student_id VARCHAR(36) NOT NULL,
+    student_username VARCHAR(100) NOT NULL,
+    submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) NOT NULL DEFAULT 'submitted',
     total_score DECIMAL(5,2),
     max_score DECIMAL(5,2),
+    graded_at TIMESTAMP,
+    graded_by VARCHAR(36),
     feedback TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    submitted_by VARCHAR(36), -- For coach proxy submissions
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 提交答案详情表
-CREATE TABLE IF NOT EXISTS submission_answers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    submission_id UUID NOT NULL REFERENCES exam_submissions(id) ON DELETE CASCADE,
+-- Create answers table
+CREATE TABLE IF NOT EXISTS answers (
+    id VARCHAR(36) PRIMARY KEY,
+    submission_id VARCHAR(36) NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+    question_id VARCHAR(36) NOT NULL,
     question_number INTEGER NOT NULL,
-    question_id VARCHAR(255),
-    answer_text TEXT,  -- 文本答案（如果有）
-    answer_image_url TEXT,  -- 答案图片URL
-    upload_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    score DECIMAL(5,2),  -- 该题得分
-    max_score DECIMAL(5,2),  -- 该题满分
-    grader_feedback TEXT,  -- 阅卷员反馈
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    answer_text TEXT,
+    score DECIMAL(5,2),
+    max_score DECIMAL(5,2) NOT NULL DEFAULT 0,
+    comments TEXT,
+    image_url VARCHAR(500),
+    upload_time TIMESTAMP,
+    grader_id VARCHAR(36),
+    grader_name VARCHAR(100),
+    graded_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 文件上传记录表
-CREATE TABLE IF NOT EXISTS submission_files (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    submission_id UUID REFERENCES exam_submissions(id) ON DELETE CASCADE,
-    file_storage_id VARCHAR(255) NOT NULL,  -- 文件存储服务中的文件ID
-    original_name VARCHAR(255) NOT NULL,
-    file_type VARCHAR(50) NOT NULL,
-    file_size BIGINT NOT NULL,
-    upload_user_id VARCHAR(255) NOT NULL,
-    upload_user_type VARCHAR(50) NOT NULL,  -- student, coach
-    upload_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    file_url TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_submissions_exam_id ON submissions(exam_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_student_id ON submissions(student_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_student_username ON submissions(student_username);
+CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
+CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at);
+CREATE INDEX IF NOT EXISTS idx_submissions_graded_by ON submissions(graded_by);
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_exam_submissions_exam_id ON exam_submissions(exam_id);
-CREATE INDEX IF NOT EXISTS idx_exam_submissions_student_id ON exam_submissions(student_id);
-CREATE INDEX IF NOT EXISTS idx_exam_submissions_coach_id ON exam_submissions(coach_id);
-CREATE INDEX IF NOT EXISTS idx_submission_answers_submission_id ON submission_answers(submission_id);
-CREATE INDEX IF NOT EXISTS idx_submission_answers_question_number ON submission_answers(question_number);
-CREATE INDEX IF NOT EXISTS idx_submission_files_submission_id ON submission_files(submission_id);
+CREATE INDEX IF NOT EXISTS idx_answers_submission_id ON answers(submission_id);
+CREATE INDEX IF NOT EXISTS idx_answers_question_id ON answers(question_id);
+CREATE INDEX IF NOT EXISTS idx_answers_question_number ON answers(question_number);
+CREATE INDEX IF NOT EXISTS idx_answers_grader_id ON answers(grader_id);
 
--- 创建更新时间触发器
+-- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -65,8 +65,22 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_exam_submissions_updated_at BEFORE UPDATE ON exam_submissions
+-- Create triggers for updated_at
+CREATE TRIGGER update_submissions_updated_at 
+    BEFORE UPDATE ON submissions 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_submission_answers_updated_at BEFORE UPDATE ON submission_answers
+CREATE TRIGGER update_answers_updated_at 
+    BEFORE UPDATE ON answers 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Insert sample data for testing (optional)
+-- This can be removed in production
+
+-- Note: Make sure to create the database and user first:
+-- CREATE DATABASE submission_service;
+-- CREATE USER db WITH PASSWORD 'root';
+-- GRANT ALL PRIVILEGES ON DATABASE submission_service TO db;
+-- GRANT ALL PRIVILEGES ON SCHEMA submissionservice TO db;
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA submissionservice TO db;
+-- GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA submissionservice TO db;
