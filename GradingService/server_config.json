@@ -1,0 +1,37 @@
+{
+  "serverIP": "127.0.0.1",
+  "serverPort": 3005,
+  "maximumServerConnection": 10000,
+  "maximumClientConnection": 10000,
+  "gitlabHost": "http://10.1.18.188:2000",
+  "gitlabNameSpace": "repos",
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/galphos?currentSchema=authservice",
+  "username": "db",
+  "password": "root",
+  "prepStmtCacheSize": 250,
+  "prepStmtCacheSqlLimit":  2048,
+  "maximumPoolSize": 3,
+  "connectionLiveMinutes": 10,
+  "isTest": false,
+  "userManagementService": {
+    "host": "127.0.0.1",
+    "port": 3002,
+    "internalApiKey": "internal-service-key-2024",
+    "timeout": 30000,
+    "healthCheckInterval": 30000
+  },
+  "examManagementService": {
+    "host": "127.0.0.1",
+    "port": 3003,
+    "internalApiKey": "internal-service-key-2024",
+    "timeout": 30000,
+    "healthCheckInterval": 30000
+  },
+  "submissionService": {
+    "host": "127.0.0.1",
+    "port": 3004,
+    "internalApiKey": "internal-service-key-2024",
+    "timeout": 30000,
+    "healthCheckInterval": 30000
+  }
+}

@@ -1,0 +1,242 @@
+package Models
+
+import io.circe.{Decoder, Encoder}
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import java.time.{LocalDateTime, ZonedDateTime}
+
+// 阅卷员信息
+case class Grader(
+  id: Long,
+  username: String,
+  fullName: String,
+  email: String,
+  phone: Option[String],
+  status: String,
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime
+)
+
+// 阅卷任务
+case class GradingTask(
+  id: Long,
+  examId: Long,
+  submissionId: Long,
+  graderId: Option[Long],
+  questionNumber: Int,
+  status: String,
+  maxScore: BigDecimal,
+  actualScore: Option[BigDecimal],
+  feedback: Option[String],
+  assignedAt: Option[LocalDateTime],
+  startedAt: Option[LocalDateTime],
+  completedAt: Option[LocalDateTime],
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime
+)
+
+// 题目分数配置
+case class QuestionScore(
+  examId: Long,
+  questionNumber: Int,
+  maxScore: BigDecimal,
+  questionType: String,
+  description: Option[String],
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime
+)
+
+// 阅卷进度
+case class GradingProgress(
+  examId: Long,
+  totalTasks: Int,
+  completedTasks: Int,
+  inProgressTasks: Int,
+  pendingTasks: Int,
+  completionPercentage: BigDecimal
+)
+
+// 非独立学生（教练管理的学生）
+case class CoachStudent(
+  id: Long,
+  coachId: Long,
+  studentName: String,
+  studentSchool: String,
+  studentProvince: String,
+  grade: Option[String],
+  isActive: Boolean,
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime
+)
+
+// 评分历史
+case class ScoreHistory(
+  id: Long,
+  taskId: Long,
+  graderId: Long,
+  score: BigDecimal,
+  feedback: Option[String],
+  createdAt: LocalDateTime
+)
+
+// 阅卷任务分配请求
+case class TaskAssignmentRequest(
+  examId: Long,
+  graderId: Long,
+  questionNumbers: List[Int]
+)
+
+// 阅卷任务详情（包含提交信息）
+case class GradingTaskDetail(
+  task: GradingTask,
+  examTitle: String,
+  studentName: String,
+  submissionContent: Option[String],
+  questionScores: List[QuestionScore]
+)
+
+// 开始阅卷请求
+case class StartGradingRequest(
+  taskId: Long
+)
+
+// 提交阅卷结果请求
+case class SubmitGradingRequest(
+  taskId: Long,
+  scores: Map[Int, BigDecimal], // questionNumber -> score
+  feedback: Option[String]
+)
+
+// 保存阅卷进度请求
+case class SaveProgressRequest(
+  taskId: Long,
+  questionNumber: Int,
+  score: BigDecimal,
+  feedback: Option[String]
+)
+
+// 创建/更新题目分数请求
+case class QuestionScoreRequest(
+  questionNumber: Int,
+  maxScore: BigDecimal,
+  questionType: String,
+  description: Option[String]
+)
+
+// 更新单题分数请求
+case class UpdateQuestionScoreRequest(
+  maxScore: BigDecimal,
+  description: Option[String]
+)
+
+// 创建教练学生请求
+case class CreateCoachStudentRequest(
+  studentName: String,
+  studentSchool: String,
+  studentProvince: String,
+  grade: Option[String]
+)
+
+// 更新教练学生请求
+case class UpdateCoachStudentRequest(
+  studentName: Option[String],
+  studentSchool: Option[String],
+  studentProvince: Option[String],
+  grade: Option[String],
+  isActive: Option[Boolean]
+)
+
+// 通用响应
+case class ApiResponse[T](
+  success: Boolean,
+  message: String,
+  data: Option[T] = None
+)
+
+case class PaginatedResponse[T](
+  success: Boolean,
+  message: String,
+  data: List[T],
+  total: Long,
+  page: Int,
+  pageSize: Int
+)
+
+// JSON编解码器
+import io.circe.generic.auto.given
+
+// 阅卷图片信息
+case class GradingImage(
+  imageUrl: String,
+  fileName: String,
+  examId: Long,
+  studentId: Long,
+  questionNumber: Int,
+  uploadTime: LocalDateTime
+)
+
+// 图片查询请求
+case class ImageQueryRequest(
+  examId: Long,
+  studentId: Option[Long] = None,
+  questionNumber: Option[Int] = None
+)
+
+// 隐式JSON编解码器
+object Implicits {
+  implicit val graderEncoder: Encoder[Grader] = deriveEncoder[Grader]
+  implicit val graderDecoder: Decoder[Grader] = deriveDecoder[Grader]
+  
+  implicit val gradingTaskEncoder: Encoder[GradingTask] = deriveEncoder[GradingTask]
+  implicit val gradingTaskDecoder: Decoder[GradingTask] = deriveDecoder[GradingTask]
+  
+  implicit val questionScoreEncoder: Encoder[QuestionScore] = deriveEncoder[QuestionScore]
+  implicit val questionScoreDecoder: Decoder[QuestionScore] = deriveDecoder[QuestionScore]
+  
+  implicit val gradingProgressEncoder: Encoder[GradingProgress] = deriveEncoder[GradingProgress]
+  implicit val gradingProgressDecoder: Decoder[GradingProgress] = deriveDecoder[GradingProgress]
+  
+  implicit val coachStudentEncoder: Encoder[CoachStudent] = deriveEncoder[CoachStudent]
+  implicit val coachStudentDecoder: Decoder[CoachStudent] = deriveDecoder[CoachStudent]
+  
+  implicit val scoreHistoryEncoder: Encoder[ScoreHistory] = deriveEncoder[ScoreHistory]
+  implicit val scoreHistoryDecoder: Decoder[ScoreHistory] = deriveDecoder[ScoreHistory]
+  
+  implicit val taskAssignmentRequestEncoder: Encoder[TaskAssignmentRequest] = deriveEncoder[TaskAssignmentRequest]
+  implicit val taskAssignmentRequestDecoder: Decoder[TaskAssignmentRequest] = deriveDecoder[TaskAssignmentRequest]
+  
+  implicit val gradingTaskDetailEncoder: Encoder[GradingTaskDetail] = deriveEncoder[GradingTaskDetail]
+  implicit val gradingTaskDetailDecoder: Decoder[GradingTaskDetail] = deriveDecoder[GradingTaskDetail]
+  
+  implicit val startGradingRequestEncoder: Encoder[StartGradingRequest] = deriveEncoder[StartGradingRequest]
+  implicit val startGradingRequestDecoder: Decoder[StartGradingRequest] = deriveDecoder[StartGradingRequest]
+  
+  implicit val submitGradingRequestEncoder: Encoder[SubmitGradingRequest] = deriveEncoder[SubmitGradingRequest]
+  implicit val submitGradingRequestDecoder: Decoder[SubmitGradingRequest] = deriveDecoder[SubmitGradingRequest]
+  
+  implicit val saveProgressRequestEncoder: Encoder[SaveProgressRequest] = deriveEncoder[SaveProgressRequest]
+  implicit val saveProgressRequestDecoder: Decoder[SaveProgressRequest] = deriveDecoder[SaveProgressRequest]
+  
+  implicit val questionScoreRequestEncoder: Encoder[QuestionScoreRequest] = deriveEncoder[QuestionScoreRequest]
+  implicit val questionScoreRequestDecoder: Decoder[QuestionScoreRequest] = deriveDecoder[QuestionScoreRequest]
+  
+  implicit val updateQuestionScoreRequestEncoder: Encoder[UpdateQuestionScoreRequest] = deriveEncoder[UpdateQuestionScoreRequest]
+  implicit val updateQuestionScoreRequestDecoder: Decoder[UpdateQuestionScoreRequest] = deriveDecoder[UpdateQuestionScoreRequest]
+  
+  implicit val createCoachStudentRequestEncoder: Encoder[CreateCoachStudentRequest] = deriveEncoder[CreateCoachStudentRequest]
+  implicit val createCoachStudentRequestDecoder: Decoder[CreateCoachStudentRequest] = deriveDecoder[CreateCoachStudentRequest]
+  
+  implicit val updateCoachStudentRequestEncoder: Encoder[UpdateCoachStudentRequest] = deriveEncoder[UpdateCoachStudentRequest]
+  implicit val updateCoachStudentRequestDecoder: Decoder[UpdateCoachStudentRequest] = deriveDecoder[UpdateCoachStudentRequest]
+  
+  implicit val gradingImageEncoder: Encoder[GradingImage] = deriveEncoder[GradingImage]
+  implicit val gradingImageDecoder: Decoder[GradingImage] = deriveDecoder[GradingImage]
+
+  implicit val imageQueryRequestEncoder: Encoder[ImageQueryRequest] = deriveEncoder[ImageQueryRequest]
+  implicit val imageQueryRequestDecoder: Decoder[ImageQueryRequest] = deriveDecoder[ImageQueryRequest]
+  
+  implicit def apiResponseEncoder[T: Encoder]: Encoder[ApiResponse[T]] = deriveEncoder[ApiResponse[T]]
+  implicit def apiResponseDecoder[T: Decoder]: Decoder[ApiResponse[T]] = deriveDecoder[ApiResponse[T]]
+  
+  implicit def paginatedResponseEncoder[T: Encoder]: Encoder[PaginatedResponse[T]] = deriveEncoder[PaginatedResponse[T]]
+  implicit def paginatedResponseDecoder[T: Decoder]: Decoder[PaginatedResponse[T]] = deriveDecoder[PaginatedResponse[T]]
+}
