@@ -21,6 +21,17 @@ trait ExamService {
   def reserveExamId(reservedBy: String): IO[String]
   def deleteReservedExamId(examId: String, deletedBy: String): IO[Boolean]
   def isExamIdReserved(examId: String): IO[Boolean]
+  def saveExamFile(
+    examId: String,
+    fileId: String,
+    fileName: String,
+    originalName: String,
+    fileUrl: String,
+    fileSize: Long,
+    fileType: String,
+    mimeType: String,
+    uploadedBy: String
+  ): IO[Boolean]
 }
 
 class ExamServiceImpl extends ExamService {
@@ -376,5 +387,46 @@ class ExamServiceImpl extends ExamService {
       subject = Option(rs.getString("subject")).filter(_.nonEmpty),
       instructions = Option(rs.getString("instructions")).filter(_.nonEmpty)
     )
+  }
+
+  def saveExamFile(
+    examId: String,
+    fileId: String,
+    fileName: String,
+    originalName: String,
+    fileUrl: String,
+    fileSize: Long,
+    fileType: String,
+    mimeType: String,
+    uploadedBy: String
+  ): IO[Boolean] = {
+    // First, delete any existing file of the same type for this exam
+    val deleteSql = """
+      DELETE FROM exam_files 
+      WHERE exam_id = ?::uuid AND file_type = ?
+    """
+    
+    val insertSql = """
+      INSERT INTO exam_files (exam_id, file_id, file_name, original_name, file_url, file_size, file_type, mime_type, uploaded_by)
+      VALUES (?::uuid, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    val deleteParams = List(examId, fileType)
+    val insertParams = List(
+      examId,
+      fileId,
+      fileName,
+      originalName,
+      fileUrl,
+      fileSize,
+      fileType,
+      mimeType,
+      uploadedBy
+    )
+
+    for {
+      _ <- DatabaseUtils.executeUpdate(deleteSql, deleteParams)
+      rows <- DatabaseUtils.executeUpdate(insertSql, insertParams)
+    } yield rows > 0
   }
 }

@@ -637,18 +637,34 @@ class ExamController(
   private def handleUploadExamFileForExam(req: Request[IO], user: JwtPayload, examId: String): IO[Response[IO]] = {
     logger.info(s"Handling exam file upload for exam ID: $examId, user: ${user.username}")
     logger.info(s"Content-Type: ${req.contentType}")
+    logger.info(s"Full Content-Type string: ${req.contentType.map(_.toString)}")
     
     req.contentType match {
-      case Some(contentType) if contentType.mediaType.toString.startsWith("multipart/form-data") =>
-        // Extract boundary from content type
-        val boundary = contentType.mediaType.toString.split("boundary=").lastOption.map(_.replaceAll("\"", ""))
+      case Some(contentType) if contentType.mediaType.mainType == "multipart" && contentType.mediaType.subType == "form-data" =>
+        // Extract boundary from content type - check both mediaType and full contentType
+        val contentTypeStr = contentType.toString
+        logger.info(s"Full Content-Type for boundary extraction: $contentTypeStr")
+        logger.info(s"MediaType mainType: ${contentType.mediaType.mainType}, subType: ${contentType.mediaType.subType}")
+        
+        val boundary = if (contentTypeStr.contains("boundary=")) {
+          contentTypeStr.split("boundary=\"").lastOption.flatMap(_.split("\"").headOption)
+            .orElse(contentTypeStr.split("boundary=").lastOption.map(_.split(";")(0).trim.replaceAll("\"", "")))
+        } else {
+          contentType.mediaType.toString.split("boundary=").lastOption.map(_.replaceAll("\"", ""))
+        }
+        
+        logger.info(s"Extracted boundary: $boundary")
+        
         boundary match {
           case Some(boundaryStr) =>
+            logger.info(s"Using boundary: $boundaryStr")
             handleMultipartFileUpload(req, user, examId, boundaryStr)
           case None =>
+            logger.error(s"Failed to extract boundary from Content-Type: $contentTypeStr")
             BadRequest(ApiResponse.error("无法从Content-Type中提取boundary"))
         }
-      case _ =>
+      case Some(contentType) =>
+        logger.warn(s"Non-multipart content type: ${contentType.mediaType} (mainType: ${contentType.mediaType.mainType}, subType: ${contentType.mediaType.subType})")
         // For non-multipart requests, return the temporary response
         val fileResponse = ExamFileUploadResponse(
           fileId = java.util.UUID.randomUUID().toString,
@@ -658,6 +674,9 @@ class ExamController(
           uploadTime = java.time.LocalDateTime.now().toString
         )
         Ok(ApiResponse.success(fileResponse, "文件上传成功 (临时响应)"))
+      case None =>
+        logger.warn("No Content-Type header found")
+        BadRequest(ApiResponse.error("缺少Content-Type头"))
     }
   }
 
@@ -668,55 +687,81 @@ class ExamController(
     req.body.compile.toVector.flatMap { bodyBytes =>
       val bodyString = new String(bodyBytes.toArray, "UTF-8")
       logger.info(s"Received multipart body length: ${bodyBytes.length}")
+      logger.debug(s"Multipart body preview (first 1000 chars): ${bodyString.take(1000)}")
       
       // Simple multipart parsing - look for file content
       try {
+        logger.info(s"Starting multipart parsing with boundary: --$boundary")
         val parts = bodyString.split(s"--$boundary")
+        logger.info(s"Split into ${parts.length} parts")
+        
         var fileName: Option[String] = None
         var fileBytes: Option[Array[Byte]] = None
         var fileType: Option[String] = None
         
-        for (part <- parts) {
+        for ((part, index) <- parts.zipWithIndex) {
+          logger.debug(s"Processing part $index (length: ${part.length})")
+          
           if (part.contains("Content-Disposition: form-data")) {
+            logger.debug(s"Found form-data part $index")
+            
             if (part.contains("name=\"file\"")) {
+              logger.info(s"Found file part at index $index")
               // This is the file part
               val lines = part.split("\r\n")
-              for (line <- lines) {
+              for ((line, lineIndex) <- lines.zipWithIndex) {
+                logger.debug(s"Part $index, line $lineIndex: ${line.take(100)}")
+                
                 if (line.contains("filename=")) {
                   val filenameMatch = """filename="([^"]+)"""".r
                   filenameMatch.findFirstMatchIn(line) match {
-                    case Some(m) => fileName = Some(m.group(1))
-                    case None => // no match
+                    case Some(m) => 
+                      fileName = Some(m.group(1))
+                      logger.info(s"Extracted filename: ${fileName.get}")
+                    case None => 
+                      logger.warn(s"Could not extract filename from line: $line")
                   }
                 }
               }
               
               // Extract binary data (everything after the headers)
               val headerEndIndex = part.indexOf("\r\n\r\n")
+              logger.debug(s"Header end index: $headerEndIndex")
+              
               if (headerEndIndex > 0) {
                 val binaryPart = part.substring(headerEndIndex + 4)
                 // Remove trailing boundary markers
                 val cleanBinary = binaryPart.replaceAll(s"\\r\\n--$boundary.*", "")
                 fileBytes = Some(cleanBinary.getBytes("ISO-8859-1"))
+                logger.info(s"Extracted file bytes: ${fileBytes.get.length} bytes")
+                logger.debug(s"File content preview (first 50 bytes): ${fileBytes.get.take(50).map(b => f"$b%02x").mkString(" ")}")
+              } else {
+                logger.warn(s"Could not find header end in file part")
               }
             } else if (part.contains("name=\"fileType\"")) {
+              logger.info(s"Found fileType part at index $index")
               // Extract file type
               val headerEndIndex = part.indexOf("\r\n\r\n")
               if (headerEndIndex > 0) {
                 val value = part.substring(headerEndIndex + 4).trim.replaceAll(s"\\r\\n--$boundary.*", "")
                 fileType = Some(value)
+                logger.info(s"Extracted fileType: ${fileType.get}")
               }
             }
           }
         }
         
+        logger.info(s"Multipart parsing complete - fileName: $fileName, fileBytes length: ${fileBytes.map(_.length)}, fileType: $fileType")
+        
         (fileName, fileBytes, fileType) match {
           case (Some(name), Some(bytes), typeOpt) =>
             val finalFileType = typeOpt.getOrElse("question")
-            logger.info(s"Extracted file: $name, size: ${bytes.length}, type: $finalFileType")
+            logger.info(s"Successfully parsed multipart data - file: $name, size: ${bytes.length}, type: $finalFileType")
             
             // Validate file upload
             validateFileUpload(name, bytes.length.toLong, finalFileType).flatMap { _ =>
+              logger.info(s"File validation passed")
+              
               // Create upload request for FileStorageService
               val uploadRequest = FileStorageUploadRequest(
                 originalName = name,
@@ -731,18 +776,58 @@ class ExamController(
                 category = "exam"
               )
               
+              logger.info(s"Created FileStorageUploadRequest for file: $name")
+              
               // Call FileStorageService
               fileStorageService.uploadFile(uploadRequest).flatMap { storageResponse =>
+                logger.info(s"FileStorageService response: success=${storageResponse.success}, fileId=${storageResponse.fileId}, message=${storageResponse.message}")
+                
                 if (storageResponse.success) {
-                  val fileResponse = ExamFileUploadResponse(
-                    fileId = storageResponse.fileId.getOrElse("unknown"),
+                  val fileId = storageResponse.fileId.getOrElse("unknown")
+                  val fileUrl = storageResponse.url.getOrElse("")
+                  
+                  logger.info(s"Saving exam file info to database: examId=$examId, fileId=$fileId, fileType=$finalFileType")
+                  
+                  // Save file information to local exam_files table
+                  val saveFileInfo = examService.saveExamFile(
+                    examId = examId,
+                    fileId = fileId,
+                    fileName = name,
                     originalName = name,
-                    url = storageResponse.url.getOrElse(""),
-                    size = bytes.length.toLong,
-                    uploadTime = java.time.LocalDateTime.now().toString
+                    fileUrl = fileUrl,
+                    fileSize = bytes.length.toLong,
+                    fileType = finalFileType,
+                    mimeType = detectMimeType(name),
+                    uploadedBy = user.username
                   )
-                  Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+                  
+                  saveFileInfo.flatMap { saved =>
+                    logger.info(s"Exam file info saved to database: success=$saved")
+                    
+                    if (saved) {
+                      val fileResponse = ExamFileUploadResponse(
+                        fileId = fileId,
+                        originalName = name,
+                        url = fileUrl,
+                        size = bytes.length.toLong,
+                        uploadTime = java.time.LocalDateTime.now().toString
+                      )
+                      Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+                    } else {
+                      logger.warn(s"File uploaded to storage but failed to save metadata for exam $examId")
+                      // Still return success since the file was uploaded successfully
+                      val fileResponse = ExamFileUploadResponse(
+                        fileId = fileId,
+                        originalName = name,
+                        url = fileUrl,
+                        size = bytes.length.toLong,
+                        uploadTime = java.time.LocalDateTime.now().toString
+                      )
+                      Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+                    }
+                  }
                 } else {
+                  logger.error(s"FileStorageService upload failed: ${storageResponse.message}")
                   BadRequest(ApiResponse.error(storageResponse.message.getOrElse("文件上传失败")))
                 }
               }
