@@ -1,0 +1,46 @@
+{
+  "serverIP": "localhost",
+  "serverPort": 3008,
+  "maximumServerConnection": 1000,
+  "maximumClientConnection": 1000,
+  "jdbcUrl": "jdbc:postgresql://localhost:5432/file_storage?currentSchema=filestorage",
+  "username": "db",
+  "password": "root",
+  "prepStmtCacheSize": 250,
+  "prepStmtCacheSqlLimit": 2048,
+  "maximumPoolSize": 20,
+  "connectionLiveMinutes": 30,
+  "isTest": false,
+  "storage": {
+    "localPath": "./storage",
+    "baseUrl": "http://localhost:3008",
+    "maxFileSize": {
+      "avatar": 5242880,
+      "answer-image": 10485760,
+      "exam-file": 52428800,
+      "document": 10485760,
+      "default": 10485760
+    },
+    "allowedTypes": {
+      "image": [
+        "image/jpeg",
+        "image/jpg", 
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/bmp"
+      ],
+      "document": [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+      ]
+    }
+  },
+  "jwtSecret": "your-jwt-secret-key-here",
+  "jwtExpiration": 86400,
+  "internalApiKey": "internal-api-key-for-microservice-communication"
+}

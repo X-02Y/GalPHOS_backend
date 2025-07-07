@@ -25,6 +25,13 @@ implicit val localDateTimeDecoder: Decoder[LocalDateTime] =
     }
   }
 
+// JSON encoders/decoders for Array[Byte] (for FileStorageService communication)
+implicit val byteArrayEncoder: Encoder[Array[Byte]] = 
+  Encoder.encodeList[Int].contramap(_.map(_.toInt).toList)
+
+implicit val byteArrayDecoder: Decoder[Array[Byte]] = 
+  Decoder.decodeList[Int].map(_.map(_.toByte).toArray)
+
 // 统一API响应格式
 case class ApiResponse[T](
   success: Boolean,
@@ -484,3 +491,24 @@ object ErrorCode {
   def toApiResponse(error: ErrorCode): ApiResponse[String] = 
     ApiResponse(success = false, message = Some(error.message))
 }
+
+// Internal file transfer models (for FileStorageService communication)
+case class InternalFileUploadRequest(
+  originalName: String,
+  fileContent: Array[Byte],
+  fileType: String,
+  mimeType: String,
+  uploadUserId: Option[String] = None,
+  uploadUserType: Option[String] = None,
+  examId: Option[String] = None,
+  submissionId: Option[String] = None,
+  description: Option[String] = None,
+  category: String
+)
+
+case class InternalFileResponse(
+  success: Boolean,
+  fileId: Option[String] = None,
+  url: Option[String] = None,
+  message: Option[String] = None
+)

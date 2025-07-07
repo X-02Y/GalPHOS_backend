@@ -38,101 +38,62 @@ class FileStorageServiceImpl(config: ServiceConfig, client: Client[IO]) extends 
     
     // Convert List[Int] to Array[Byte] for compatibility with FileStorageService
     val fileContentBytes = request.fileContent.map(_.toByte).toArray
-    val base64Content = Base64.getEncoder.encodeToString(fileContentBytes)
     
     logger.info(s"[FileStorageService] Converted to byte array size: ${fileContentBytes.length}")
-    logger.info(s"[FileStorageService] Base64 content length: ${base64Content.length}")
-    logger.debug(s"[FileStorageService] Base64 content preview: ${base64Content.take(100)}...")
     
-    // Create the request format exactly as expected by FileStorageService Spray JSON
-    // Spray JSON converts Array[Byte] to JSON array of integers, not base64 string
-    val fileContentJsonArray = fileContentBytes.map(_.toInt).mkString("[", ",", "]")
+    // Create InternalFileUploadRequest for FileStorageService
+    val internalRequest = InternalFileUploadRequest(
+      originalName = request.originalName,
+      fileContent = fileContentBytes,
+      fileType = request.fileType,
+      mimeType = request.mimeType,
+      uploadUserId = Some(request.uploadUserId),
+      uploadUserType = Some(request.uploadUserType),
+      examId = request.examId,
+      submissionId = request.submissionId,
+      description = request.description,
+      category = request.category
+    )
     
-    val jsonPayload = s"""{
-      "originalName": "${request.originalName.replace("\"", "\\\"")}",
-      "fileContent": $fileContentJsonArray,
-      "fileType": "${request.fileType}",
-      "mimeType": "${request.mimeType}",
-      "uploadUserId": ${request.uploadUserId match {
-        case userId if userId.nonEmpty => s""""$userId""""
-        case _ => "null"
-      }},
-      "uploadUserType": ${request.uploadUserType match {
-        case userType if userType.nonEmpty => s""""$userType""""
-        case _ => "null"
-      }},
-      "examId": ${request.examId.map(id => s""""$id"""").getOrElse("null")},
-      "submissionId": ${request.submissionId.map(id => s""""$id"""").getOrElse("null")},
-      "description": ${request.description.map(desc => s""""${desc.replace("\"", "\\\"").replace("考试", "exam").replace("文件", "file")}"""").getOrElse("null")},
-      "category": "${request.category}"
-    }"""
-    
-    logger.info(s"[FileStorageService] Prepared JSON request")
-    logger.info(s"[FileStorageService] JSON payload length: ${jsonPayload.length}")
-    logger.debug(s"[FileStorageService] JSON payload (first 500 chars): ${jsonPayload.take(500)}...")
-    logger.debug(s"[FileStorageService] JSON payload (last 500 chars): ...${jsonPayload.takeRight(500)}")
-    
-    // Let's also log the structure without the large file content array for debugging
-    val debugJsonWithoutContent = jsonPayload.replace(fileContentJsonArray, s"[<byte-array-${fileContentBytes.length}-elements>]")
-    logger.info(s"[FileStorageService] Request structure: $debugJsonWithoutContent")
+    logger.info(s"[FileStorageService] Created InternalFileUploadRequest")
     
     val uploadRequest = Request[IO](
       method = org.http4s.Method.POST,
       uri = org.http4s.Uri.fromString(url).toOption.get,
       headers = Headers(
-        `Content-Type`(MediaType.application.json)
+        `Content-Type`(MediaType.application.json),
+        org.http4s.Header.Raw(org.typelevel.ci.CIString("X-API-Key"), "internal-api-key")
       )
-    ).withEntity(jsonPayload)
+    ).withEntity(internalRequest)
 
     logger.info(s"[FileStorageService] Sending HTTP POST request to FileStorage")
     
-    client.expect[String](uploadRequest).flatMap { responseBody =>
+    client.expect[InternalFileResponse](uploadRequest).flatMap { response =>
       logger.info(s"[FileStorageService] Received response from FileStorage")
-      logger.info(s"[FileStorageService] Response body: $responseBody")
+      logger.info(s"[FileStorageService] Response success: ${response.success}")
       
-      // Parse the response manually since it's from Spray JSON
-      io.circe.parser.parse(responseBody) match {
-        case Right(json) =>
-          logger.info(s"[FileStorageService] Successfully parsed JSON response")
-          val cursor = json.hcursor
-          val success = cursor.downField("success").as[Boolean].getOrElse(false)
-          
-          logger.info(s"[FileStorageService] Response success status: $success")
-          
-          if (success) {
-            val fileId = cursor.downField("fileId").as[String].toOption
-            val originalName = cursor.downField("originalName").as[String].toOption
-            
-            logger.info(s"[FileStorageService] Upload successful - fileId: $fileId, originalName: $originalName")
-            
-            IO.pure(FileStorageResponse(
-              success = true,
-              fileId = fileId,
-              url = fileId.map(id => s"$baseUrl/api/files/$id"),
-              message = Some("File uploaded successfully")
-            ))
-          } else {
-            val error = cursor.downField("error").as[String].getOrElse("Unknown error")
-            logger.error(s"[FileStorageService] Upload failed with error: $error")
-            IO.pure(FileStorageResponse(success = false, message = Some(error)))
-          }
-        case Left(parseError) =>
-          logger.error(s"[FileStorageService] Failed to parse JSON response: $parseError")
-          logger.error(s"[FileStorageService] Raw response: $responseBody")
-          IO.pure(FileStorageResponse(success = false, message = Some(s"Failed to parse response: $parseError")))
+      if (response.success) {
+        logger.info(s"[FileStorageService] Upload successful - fileId: ${response.fileId}, url: ${response.url}")
+        
+        IO.pure(FileStorageResponse(
+          success = true,
+          fileId = response.fileId,
+          url = response.url,
+          message = response.message.orElse(Some("File uploaded successfully"))
+        ))
+      } else {
+        val error = response.message.getOrElse("Unknown error")
+        logger.error(s"[FileStorageService] Upload failed with error: $error")
+        IO.pure(FileStorageResponse(success = false, message = Some(error)))
       }
     }.handleErrorWith { error =>
       logger.error(s"[FileStorageService] HTTP request failed: ${error.getClass.getSimpleName}: ${error.getMessage}", error)
       
-      // Try to get the actual error response if it's an UnexpectedStatus
+      // Handle different types of errors
       error match {
         case unexpectedStatus: org.http4s.client.UnexpectedStatus =>
-          unexpectedStatus.response.as[String].flatMap { errorBody =>
-            logger.error(s"[FileStorageService] Error response body: $errorBody")
-            IO.pure(FileStorageResponse(success = false, message = Some(s"Upload failed (${unexpectedStatus.status}): $errorBody")))
-          }.handleErrorWith { _ =>
-            IO.pure(FileStorageResponse(success = false, message = Some(s"Upload failed: ${error.getMessage}")))
-          }
+          logger.error(s"[FileStorageService] HTTP ${unexpectedStatus.status} error")
+          IO.pure(FileStorageResponse(success = false, message = Some(s"Upload failed (${unexpectedStatus.status}): ${unexpectedStatus.getMessage}")))
         case _ =>
           IO.pure(FileStorageResponse(success = false, message = Some(s"Upload failed: ${error.getMessage}")))
       }
@@ -147,7 +108,8 @@ class FileStorageServiceImpl(config: ServiceConfig, client: Client[IO]) extends 
       uri = org.http4s.Uri.fromString(url).toOption.get,
       headers = Headers(
         Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, fileStorageConfig.internalApiKey)),
-        `Content-Type`(MediaType.application.json)
+        `Content-Type`(MediaType.application.json),
+        org.http4s.Header.Raw(org.typelevel.ci.CIString("X-API-Key"), "internal-api-key")
       )
     ).withEntity(request)
 
@@ -167,7 +129,8 @@ class FileStorageServiceImpl(config: ServiceConfig, client: Client[IO]) extends 
       uri = org.http4s.Uri.fromString(url).toOption.get,
       headers = Headers(
         Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, fileStorageConfig.internalApiKey)),
-        `Content-Type`(MediaType.application.json)
+        `Content-Type`(MediaType.application.json),
+        org.http4s.Header.Raw(org.typelevel.ci.CIString("X-API-Key"), "internal-api-key")
       )
     ).withEntity(request)
 

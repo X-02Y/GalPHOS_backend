@@ -840,6 +840,9 @@ class ExamController(
           logger.error(s"Multipart parsing error: ${ex.getMessage}", ex)
           BadRequest(ApiResponse.error(s"解析multipart数据失败: ${ex.getMessage}"))
       }
+    }.handleErrorWith { error =>
+      logger.error(s"Error in handleMultipartFileUpload: ${error.getMessage}", error)
+      InternalServerError(ApiResponse.error(s"文件上传处理失败: ${error.getMessage}"))
     }
   }
 
