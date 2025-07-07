@@ -161,16 +161,16 @@ CREATE TRIGGER update_exam_answers_updated_at BEFORE UPDATE ON exam_answers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 插入默认数据
-INSERT INTO exams (title, description, start_time, end_time, status, created_by, duration, total_questions, max_score, subject)
-VALUES 
-    ('示例物理考试', '这是一个示例物理考试', 
-     CURRENT_TIMESTAMP + INTERVAL '1 day', 
-     CURRENT_TIMESTAMP + INTERVAL '1 day' + INTERVAL '3 hours', 
-     'draft', 'admin', 180, 20, 100.0, '物理'),
-    ('示例数学考试', '这是一个示例数学考试', 
-     CURRENT_TIMESTAMP + INTERVAL '2 days', 
-     CURRENT_TIMESTAMP + INTERVAL '2 days' + INTERVAL '2 hours', 
-     'draft', 'admin', 120, 15, 75.0, '数学')
-ON CONFLICT DO NOTHING;
+-- INSERT INTO exams (title, description, start_time, end_time, status, created_by, duration, total_questions, max_score, subject)
+-- VALUES 
+--     ('示例物理考试', '这是一个示例物理考试', 
+--      CURRENT_TIMESTAMP + INTERVAL '1 day', 
+--      CURRENT_TIMESTAMP + INTERVAL '1 day' + INTERVAL '3 hours', 
+--      'draft', 'admin', 180, 20, 100.0, '物理'),
+--     ('示例数学考试', '这是一个示例数学考试', 
+--      CURRENT_TIMESTAMP + INTERVAL '2 days', 
+--      CURRENT_TIMESTAMP + INTERVAL '2 days' + INTERVAL '2 hours', 
+--      'draft', 'admin', 120, 15, 75.0, '数学')
+-- ON CONFLICT DO NOTHING;
 
 COMMIT;

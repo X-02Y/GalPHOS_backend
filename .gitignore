@@ -8,3 +8,4 @@ project/project/
 **/.bloop/
 **/logs/*.log
 *.ps1
+FileStorageService/storage
