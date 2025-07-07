@@ -74,6 +74,13 @@ class FileStorageServiceImpl(config: ServiceConfig, fileRepository: FileReposito
       _ <- IO {
         Files.write(filePath, fileContent)
         logger.info(s"File written to storage: $filePath")
+        logger.debug(s"File content preview (first 100 bytes): ${fileContent.take(100).map(b => f"$b%02x").mkString(" ")}")
+        
+        // For text files, also log as string to verify encoding
+        if (mimeType.startsWith("text/")) {
+          val contentAsString = new String(fileContent, "UTF-8")
+          logger.debug(s"Text file content preview (first 200 chars): ${contentAsString.take(200)}")
+        }
       }
       
       // Generate file URL
@@ -113,6 +120,15 @@ class FileStorageServiceImpl(config: ServiceConfig, fileRepository: FileReposito
           IO {
             if (Files.exists(filePath)) {
               val fileContent = Files.readAllBytes(filePath)
+              logger.info(s"File read from storage: $filePath, size: ${fileContent.length}")
+              logger.debug(s"Downloaded file content preview (first 100 bytes): ${fileContent.take(100).map(b => f"$b%02x").mkString(" ")}")
+              
+              // For text files, also log as string to verify encoding
+              if (record.mimeType.startsWith("text/")) {
+                val contentAsString = new String(fileContent, "UTF-8")
+                logger.debug(s"Downloaded text file content preview (first 200 chars): ${contentAsString.take(200)}")
+              }
+              
               Some((fileContent, record.originalName, record.mimeType))
             } else {
               logger.error(s"Physical file not found: $filePath")

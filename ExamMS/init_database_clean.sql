@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS exams (
 CREATE TABLE IF NOT EXISTS exam_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+    file_id VARCHAR(255) NOT NULL, -- 文件存储服务返回的文件ID
     file_name VARCHAR(255) NOT NULL,
     original_name VARCHAR(255),
     file_url VARCHAR(500),

@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory
 import java.nio.charset.StandardCharsets
 import io.circe.syntax.*
 import io.circe.generic.auto.*
+import fs2.Stream
 
 class FileStorageController(
   fileStorageService: FileStorageService,
@@ -201,11 +202,17 @@ class FileStorageController(
     case GET -> Root / "api" / "files" / fileId / "download" =>
       fileStorageService.downloadFile(fileId).flatMap {
         case Some((content, originalName, mimeType)) =>
-          Ok(content)
-            .map(_.withHeaders(
+          // Convert Array[Byte] to proper binary response using fs2.Stream[IO, Byte]
+          val stream = fs2.Stream.emits(content).covary[IO]
+          Response[IO](
+            status = Status.Ok,
+            headers = Headers(
               Header.Raw(ci"Content-Disposition", s"""attachment; filename="$originalName""""),
-              Header.Raw(ci"Content-Type", mimeType)
-            ))
+              Header.Raw(ci"Content-Type", mimeType),
+              Header.Raw(ci"Content-Length", content.length.toString)
+            ),
+            body = stream
+          ).pure[IO]
         case None =>
           NotFound(ApiResponse.error[String]("File not found").asJson)
       }.handleErrorWith { error =>
@@ -219,11 +226,17 @@ class FileStorageController(
         requireRole(user, "student", "coach") {
           fileStorageService.downloadFile(fileId).flatMap {
             case Some((content, originalName, mimeType)) =>
-              Ok(content)
-                .map(_.withHeaders(
+              // Convert Array[Byte] to proper binary response
+              val stream = fs2.Stream.emits(content).covary[IO]
+              Response[IO](
+                status = Status.Ok,
+                headers = Headers(
                   Header.Raw(ci"Content-Disposition", s"""attachment; filename="$originalName""""),
-                  Header.Raw(ci"Content-Type", mimeType)
-                ))
+                  Header.Raw(ci"Content-Type", mimeType),
+                  Header.Raw(ci"Content-Length", content.length.toString)
+                ),
+                body = stream
+              ).pure[IO]
             case None =>
               NotFound(ApiResponse.error[String]("File not found").asJson)
           }.handleErrorWith { error =>
@@ -239,11 +252,17 @@ class FileStorageController(
         requireRole(user, "grader", "admin") {
           fileStorageService.downloadFile(fileId).flatMap {
             case Some((content, originalName, mimeType)) =>
-              Ok(content)
-                .map(_.withHeaders(
+              // Convert Array[Byte] to proper binary response
+              val stream = fs2.Stream.emits(content).covary[IO]
+              Response[IO](
+                status = Status.Ok,
+                headers = Headers(
                   Header.Raw(ci"Content-Disposition", s"""attachment; filename="$originalName""""),
-                  Header.Raw(ci"Content-Type", mimeType)
-                ))
+                  Header.Raw(ci"Content-Type", mimeType),
+                  Header.Raw(ci"Content-Length", content.length.toString)
+                ),
+                body = stream
+              ).pure[IO]
             case None =>
               NotFound(ApiResponse.error[String]("File not found").asJson)
           }
@@ -336,12 +355,31 @@ class FileStorageController(
     // 13. Internal upload endpoint (for microservice communication): POST /internal/upload
     case req @ POST -> Root / "internal" / "upload" =>
       // This endpoint is for internal microservice communication and should be protected by internal API key
+      logger.info(s"Received internal upload request")
       val apiKey = req.headers.get(ci"X-API-Key").map(_.head.value)
+      logger.info(s"API Key present: ${apiKey.isDefined}, value: ${apiKey.getOrElse("none")}")
+      
       if (apiKey.contains("internal-api-key")) { // This should match your internal API key
+        logger.info(s"API key validation successful, proceeding with upload")
         req.as[InternalFileUploadRequest].flatMap { uploadReq =>
+          logger.info(s"Parsed upload request: fileName=${uploadReq.originalName}, category=${uploadReq.category}")
+          
+          // Decode Base64 file content
+          val fileContentBytes = try {
+            val decoded = java.util.Base64.getDecoder.decode(uploadReq.fileContent)
+            logger.info(s"Successfully decoded Base64 content: ${decoded.length} bytes")
+            decoded
+          } catch {
+            case ex: Exception =>
+              logger.error(s"Failed to decode Base64 content: ${ex.getMessage}")
+              throw new IllegalArgumentException(s"Invalid Base64 content: ${ex.getMessage}")
+          }
+          
+          logger.info(s"Internal upload request: fileName=${uploadReq.originalName}, size=${fileContentBytes.length}, category=${uploadReq.category}")
+          
           fileStorageService.uploadFile(
             fileName = uploadReq.originalName,
-            fileContent = uploadReq.fileContent,
+            fileContent = fileContentBytes,
             mimeType = uploadReq.mimeType,
             category = uploadReq.category,
             examId = uploadReq.examId,
@@ -349,6 +387,7 @@ class FileStorageController(
             studentId = uploadReq.uploadUserId,
             uploadedBy = uploadReq.uploadUserId.getOrElse("system")
           ).flatMap { fileRecord =>
+            logger.info(s"File upload successful: fileId=${fileRecord.id}")
             Ok(InternalFileResponse(
               success = true,
               fileId = Some(fileRecord.id),
@@ -362,8 +401,15 @@ class FileStorageController(
               message = Some(error.getMessage)
             ).asJson)
           }
+        }.handleErrorWith { error =>
+          logger.error(s"Failed to parse upload request: ${error.getMessage}", error)
+          BadRequest(InternalFileResponse(
+            success = false,
+            message = Some(s"Failed to parse request: ${error.getMessage}")
+          ).asJson)
         }
       } else {
+        logger.warn(s"Invalid API key for internal upload: ${apiKey.getOrElse("none")}")
         Response[IO](Status.Unauthorized)
           .withEntity(InternalFileResponse(success = false, message = Some("Invalid API key")).asJson)
           .pure[IO]

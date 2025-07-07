@@ -27,10 +27,10 @@ implicit val localDateTimeDecoder: Decoder[LocalDateTime] =
 
 // JSON encoders/decoders for Array[Byte] (for FileStorageService communication)
 implicit val byteArrayEncoder: Encoder[Array[Byte]] = 
-  Encoder.encodeList[Int].contramap(_.map(_.toInt).toList)
+  Encoder.encodeList[Int].contramap(_.map(b => (b & 0xFF)).toList)
 
 implicit val byteArrayDecoder: Decoder[Array[Byte]] = 
-  Decoder.decodeList[Int].map(_.map(_.toByte).toArray)
+  Decoder.decodeList[Int].map(_.map(i => (i & 0xFF).toByte).toArray)
 
 // 统一API响应格式
 case class ApiResponse[T](
@@ -404,7 +404,7 @@ case class GradingProgress(
 // 内部服务通信模型
 case class FileStorageUploadRequest(
   originalName: String,
-  fileContent: List[Int], // JSON serializable format for byte array
+  fileContent: String, // Base64 encoded file content for JSON serialization
   fileType: String,
   mimeType: String,
   uploadUserId: String,
@@ -495,7 +495,7 @@ object ErrorCode {
 // Internal file transfer models (for FileStorageService communication)
 case class InternalFileUploadRequest(
   originalName: String,
-  fileContent: Array[Byte],
+  fileContent: String, // Base64 encoded file content for JSON serialization
   fileType: String,
   mimeType: String,
   uploadUserId: Option[String] = None,
