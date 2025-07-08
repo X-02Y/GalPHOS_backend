@@ -20,7 +20,21 @@ class SubmissionController(
 ) {
   private val logger = LoggerFactory.getLogger("SubmissionController")
 
+  // CORS 支持
+  private val corsHeaders = Headers(
+    "Access-Control-Allow-Origin" -> "*",
+    "Access-Control-Allow-Methods" -> "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers" -> "Content-Type, Authorization"
+  )
+
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    // CORS 预检请求
+    case req @ OPTIONS -> _ =>
+      Ok().map(_.withHeaders(corsHeaders))
+    
+    // Health check endpoint
+    case GET -> Root / "health" =>
+      Ok(ApiResponse.success("OK")).map(_.withHeaders(corsHeaders))
     
     // Student APIs
     case req @ POST -> Root / "api" / "student" / "exams" / examId / "submit" =>
@@ -69,10 +83,10 @@ class SubmissionController(
           case Right(claims) => IO.pure(Right(claims))
           case Left(error) => 
             logger.warn(s"Authentication failed: ${error.message}")
-            Forbidden(ApiResponse.error("Unauthorized").asJson).map(Left(_))
+            Forbidden(ApiResponse.error("Unauthorized").asJson).map(_.withHeaders(corsHeaders)).map(Left(_))
         }
       case None =>
-        Forbidden(ApiResponse.error("Missing authentication token").asJson).map(Left(_))
+        Forbidden(ApiResponse.error("Missing authentication token").asJson).map(_.withHeaders(corsHeaders)).map(Left(_))
     }
   }
 
@@ -81,7 +95,7 @@ class SubmissionController(
       case Right(claims) => IO.pure(Right(claims))
       case Left(error) => 
         logger.warn(s"Authentication failed: ${error.message}")
-        Forbidden(ApiResponse.error("Unauthorized").asJson).map(Left(_))
+        Forbidden(ApiResponse.error("Unauthorized").asJson).map(_.withHeaders(corsHeaders)).map(Left(_))
     }
   }
 
@@ -94,21 +108,21 @@ class SubmissionController(
           result <- submissionService.submitExamAnswers(examId, claims.userId, request)
           response <- result match {
             case Right(submission) =>
-              Ok(ApiResponse.success(submission).asJson)
+              Ok(ApiResponse.success(submission).asJson).map(_.withHeaders(corsHeaders))
             case Left(error) =>
               error.code match {
-                case "UNAUTHORIZED" => Forbidden(ApiResponse.error(error.message).asJson)
-                case "FORBIDDEN" => Forbidden(ApiResponse.error(error.message).asJson)
-                case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson)
-                case "BAD_REQUEST" => BadRequest(ApiResponse.error(error.message).asJson)
-                case _ => InternalServerError(ApiResponse.error(error.message).asJson)
+                case "UNAUTHORIZED" => Forbidden(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                case "FORBIDDEN" => Forbidden(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                case "BAD_REQUEST" => BadRequest(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                case _ => InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
               }
           }
         } yield response
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error in student submission: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -120,18 +134,18 @@ class SubmissionController(
           result <- submissionService.getStudentSubmission(examId, claims.username)
           response <- result match {
             case Right(submission) =>
-              Ok(ApiResponse.success(submission).asJson)
+              Ok(ApiResponse.success(submission).asJson).map(_.withHeaders(corsHeaders))
             case Left(error) =>
               error.code match {
-                case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson)
-                case _ => InternalServerError(ApiResponse.error(error.message).asJson)
+                case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                case _ => InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
               }
           }
         } yield response
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error getting student submission: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -140,7 +154,29 @@ class SubmissionController(
     validateAuth(req).flatMap {
       case Right(claims) =>
         for {
-          uploadRequest <- req.as[FileUploadRequest]
+          // Try to parse as JSON first (base64 format)
+          uploadRequest <- req.as[FileUploadRequest].handleErrorWith { _ =>
+            // If JSON parsing fails, try the legacy format
+            req.as[LegacyFileUploadRequest].map(legacy => FileUploadRequest(
+              fileName = legacy.fileName,
+              fileData = legacy.fileData,
+              relatedId = legacy.relatedId,
+              questionNumber = legacy.questionNumber,
+              category = legacy.category,
+              timestamp = legacy.timestamp,
+              token = None
+            )).handleErrorWith { _ =>
+              // If both fail, try to handle as form data by reading raw body
+              req.bodyText.compile.string.flatMap { bodyString =>
+                logger.info(s"Raw request body: $bodyString")
+                parseFormDataToJson(bodyString).flatMap { parsedRequest =>
+                  IO.pure(parsedRequest)
+                }
+              }
+            }
+          }
+          
+          _ = logger.info(s"Processing upload request: fileName=${uploadRequest.fileName}, relatedId=${uploadRequest.relatedId}")
           
           // Decode base64 file data
           fileBytes <- IO.fromTry(scala.util.Try(java.util.Base64.getDecoder.decode(uploadRequest.fileData)))
@@ -153,16 +189,26 @@ class SubmissionController(
           )
           response <- result match {
             case Right(fileResponse) =>
-              Ok(ApiResponse.success(fileResponse).asJson)
+              Ok(ApiResponse.success(fileResponse).asJson).map(_.withHeaders(corsHeaders))
             case Left(error) =>
-              BadRequest(ApiResponse.error(error.message).asJson)
+              BadRequest(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
           }
         } yield response
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error uploading answer image: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      error.getMessage match {
+        case msg if msg.contains("Base64") =>
+          BadRequest(ApiResponse.error("Invalid base64 encoded file data").asJson).map(_.withHeaders(corsHeaders))
+        case _ =>
+          InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
+      }
     }
+  }
+
+  // Helper method to parse form data and convert to FileUploadRequest
+  private def parseFormDataToJson(bodyString: String): IO[FileUploadRequest] = {
+    IO.raiseError(new RuntimeException("Form data parsing not yet implemented - please use JSON format"))
   }
 
   // Coach answer image upload endpoint
@@ -186,9 +232,9 @@ class SubmissionController(
               )
               response <- result match {
                 case Right(fileResponse) =>
-                  Ok(ApiResponse.success(fileResponse).asJson)
+                  Ok(ApiResponse.success(fileResponse).asJson).map(_.withHeaders(corsHeaders))
                 case Left(error) =>
-                  BadRequest(ApiResponse.error(error.message).asJson)
+                  BadRequest(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
               }
             } yield response
           case Left(response) => IO.pure(response)
@@ -196,7 +242,7 @@ class SubmissionController(
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error uploading coach answer image: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -211,12 +257,12 @@ class SubmissionController(
               result <- submissionService.coachProxySubmission(examId, claims.userId, request)
               response <- result match {
                 case Right(submission) =>
-                  Ok(ApiResponse.success(submission).asJson)
+                  Ok(ApiResponse.success(submission).asJson).map(_.withHeaders(corsHeaders))
                 case Left(error) =>
                   error.code match {
-                    case "FORBIDDEN" => Forbidden(ApiResponse.error(error.message).asJson)
-                    case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson)
-                    case _ => InternalServerError(ApiResponse.error(error.message).asJson)
+                    case "FORBIDDEN" => Forbidden(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                    case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                    case _ => InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
                   }
               }
             } yield response
@@ -225,7 +271,7 @@ class SubmissionController(
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error in coach proxy submission: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -239,9 +285,9 @@ class SubmissionController(
               result <- submissionService.getCoachManagedSubmissions(examId, claims.userId, studentUsername)
               response <- result match {
                 case Right(submissions) =>
-                  Ok(ApiResponse.success(submissions).asJson)
+                  Ok(ApiResponse.success(submissions).asJson).map(_.withHeaders(corsHeaders))
                 case Left(error) =>
-                  InternalServerError(ApiResponse.error(error.message).asJson)
+                  InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
               }
             } yield response
           case Left(response) => IO.pure(response)
@@ -249,7 +295,7 @@ class SubmissionController(
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error getting coach managed submissions: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -263,11 +309,11 @@ class SubmissionController(
               result <- submissionService.getSubmissionForGrader(submissionId)
               response <- result match {
                 case Right(submission) =>
-                  Ok(ApiResponse.success(submission).asJson)
+                  Ok(ApiResponse.success(submission).asJson).map(_.withHeaders(corsHeaders))
                 case Left(error) =>
                   error.code match {
-                    case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson)
-                    case _ => InternalServerError(ApiResponse.error(error.message).asJson)
+                    case "NOT_FOUND" => NotFound(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
+                    case _ => InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
                   }
               }
             } yield response
@@ -276,7 +322,7 @@ class SubmissionController(
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error getting submission for grader: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -290,9 +336,9 @@ class SubmissionController(
               result <- submissionService.getGradingProgress(examId, claims.userId)
               response <- result match {
                 case Right(progress) =>
-                  Ok(ApiResponse.success(progress).asJson)
+                  Ok(ApiResponse.success(progress).asJson).map(_.withHeaders(corsHeaders))
                 case Left(error) =>
-                  InternalServerError(ApiResponse.error(error.message).asJson)
+                  InternalServerError(ApiResponse.error(error.message).asJson).map(_.withHeaders(corsHeaders))
               }
             } yield response
           case Left(response) => IO.pure(response)
@@ -300,7 +346,7 @@ class SubmissionController(
       case Left(response) => IO.pure(response)
     }.handleErrorWith { error =>
       logger.error(s"Error getting grading progress: ${error.getMessage}")
-      InternalServerError(ApiResponse.error("Internal server error").asJson)
+      InternalServerError(ApiResponse.error("Internal server error").asJson).map(_.withHeaders(corsHeaders))
     }
   }
 
@@ -309,7 +355,7 @@ class SubmissionController(
     if (claims.role == expectedRole) {
       IO.pure(Right(()))
     } else {
-      Forbidden(ApiResponse.error(s"Access denied. Required role: $expectedRole").asJson).map(Left(_))
+      Forbidden(ApiResponse.error(s"Access denied. Required role: $expectedRole").asJson).map(_.withHeaders(corsHeaders)).map(Left(_))
     }
   }
 }

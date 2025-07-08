@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Microservice Router</title>
+</head>
+<body>
+    <h1>Microservice Router Test</h1>
+    <p>Check browser console for debug output</p>
+    
+    <script type="module">
+        // Mock the microservice configuration for testing
+        const MICROSERVICE_CONFIG = {
+            examManagement: {
+                name: 'exam-management-service',
+                baseUrl: 'http://localhost:3003',
+                port: 3003,
+                paths: [
+                    '/api/admin/exams',
+                    '/api/admin/exams/*',
+                    '/api/student/exams',
+                    '/api/student/exams/*',
+                    '/api/coach/exams',
+                    '/api/grader/exams'
+                ]
+            },
+            submission: {
+                name: 'submission-service',
+                baseUrl: 'http://localhost:3004',
+                port: 3004,
+                paths: [
+                    '/api/student/exams/*/submit*',
+                    '/api/student/exams/*/submission*',
+                    '/api/student/upload/answer-image',
+                    '/api/coach/exams/*/submissions*',
+                    '/api/coach/exams/*/upload-answer*',
+                    '/api/grader/submissions*',
+                    '/api/grader/exams/*/progress*'
+                ]
+            }
+        };
+
+        function findBestMatch(requestPath) {
+            console.log('[TEST] findBestMatch called with path:', requestPath);
+            
+            const matches = [];
+
+            for (const [serviceName, config] of Object.entries(MICROSERVICE_CONFIG)) {
+                for (const servicePath of config.paths) {
+                    let priority = 0;
+                    let matchLength = 0;
+
+                    // 精确匹配 - 最高优先级
+                    if (servicePath === requestPath) {
+                        priority = 4;
+                        console.log('[TEST] Exact match found:', serviceName, servicePath, 'priority:', priority);
+                        matchLength = servicePath.length;
+                    }
+                    // 前缀匹配
+                    else if (requestPath.startsWith(servicePath) && !servicePath.includes('*')) {
+                        priority = 2;
+                        console.log('[TEST] Prefix match found:', serviceName, servicePath, 'priority:', priority);
+                        matchLength = servicePath.length;
+                    }
+                    // 通配符匹配
+                    else if (servicePath.includes('*')) {
+                        const pattern = servicePath.replace(/\*/g, '.*');
+                        const regex = new RegExp(`^${pattern}`);
+                        if (regex.test(requestPath)) {
+                            priority = 1;
+                            console.log('[TEST] Wildcard match found:', serviceName, servicePath, 'pattern:', pattern, 'priority:', priority);
+                            matchLength = servicePath.replace(/\*/g, '').length;
+                        }
+                    }
+
+                    if (priority > 0) {
+                        console.log('[TEST] Adding match:', serviceName, servicePath, 'priority:', priority, 'matchLength:', matchLength);
+                        matches.push({
+                            service: config,
+                            serviceName,
+                            priority,
+                            matchLength,
+                            path: servicePath
+                        });
+                    }
+                }
+            }
+
+            console.log('[TEST] All matches found:', matches.map(m => ({
+                service: m.serviceName,
+                path: m.path,
+                priority: m.priority,
+                matchLength: m.matchLength
+            })));
+
+            if (matches.length === 0) {
+                console.log('[TEST] No matches found');
+                return null;
+            }
+
+            // 按优先级和匹配长度排序，返回最佳匹配
+            matches.sort((a, b) => {
+                if (a.priority !== b.priority) {
+                    return b.priority - a.priority; // 优先级高的在前
+                }
+                return b.matchLength - a.matchLength; // 匹配长度长的在前
+            });
+
+            console.log('[TEST] Best match selected:', matches[0].serviceName, 'from path:', matches[0].path, 'priority:', matches[0].priority);
+
+            return {
+                service: matches[0].service,
+                serviceName: matches[0].serviceName
+            };
+        }
+
+        // Test the problematic path
+        const testPath = '/api/student/upload/answer-image';
+        console.log('=== Testing path:', testPath, '===');
+        const result = findBestMatch(testPath);
+        
+        if (result) {
+            console.log('Result:', result.serviceName, 'on port', result.service.port);
+            if (result.service.port === 3004) {
+                console.log('✅ SUCCESS: Correctly routed to SubmissionService');
+            } else {
+                console.log('❌ FAILURE: Incorrectly routed to', result.serviceName);
+            }
+        } else {
+            console.log('❌ FAILURE: No service found');
+        }
+    </script>
+</body>
+</html>

@@ -116,6 +116,17 @@ case class FileUploadRequest(
   relatedId: String, // Exam ID
   questionNumber: Int,
   category: String = "answer-image",
+  timestamp: String,
+  token: Option[String] = None // Authentication token
+)
+
+// Backward compatible file upload request (without token field)
+case class LegacyFileUploadRequest(
+  fileName: String,
+  fileData: String, // Base64 encoded
+  relatedId: String, // Exam ID
+  questionNumber: Int,
+  category: String = "answer-image",
   timestamp: String
 )
 
