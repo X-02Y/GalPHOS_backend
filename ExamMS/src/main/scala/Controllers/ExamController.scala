@@ -115,6 +115,24 @@ class ExamController(
         handleUploadExamFileForExam(req, user, examId)
       }.map(_.withHeaders(corsHeaders))
 
+    // 上传试题文件
+    case req @ POST -> Root / "api" / "admin" / "exams" / examId / "upload" / "paper" =>
+      authenticateAdmin(req) { user =>
+        handleUploadSpecificFileType(req, user, examId, "question")
+      }.map(_.withHeaders(corsHeaders))
+
+    // 上传答案文件
+    case req @ POST -> Root / "api" / "admin" / "exams" / examId / "upload" / "answer" =>
+      authenticateAdmin(req) { user =>
+        handleUploadSpecificFileType(req, user, examId, "answer")
+      }.map(_.withHeaders(corsHeaders))
+
+    // 上传答题卡文件
+    case req @ POST -> Root / "api" / "admin" / "exams" / examId / "upload" / "answer-sheet" =>
+      authenticateAdmin(req) { user =>
+        handleUploadSpecificFileType(req, user, examId, "answerSheet")
+      }.map(_.withHeaders(corsHeaders))
+
     // ===================== 学生考试管理 API =====================
 
     // 获取可用考试
@@ -857,6 +875,232 @@ class ExamController(
     }
   }
 
+  private def handleUploadSpecificFileType(req: Request[IO], user: JwtPayload, examId: String, fileType: String): IO[Response[IO]] = {
+    logger.info(s"Handling specific file upload for exam ID: $examId, fileType: $fileType, user: ${user.username}")
+    logger.info(s"Content-Type: ${req.contentType}")
+    logger.info(s"Headers: ${req.headers}")
+    
+    // Read the entire body first and then analyze it
+    req.body.compile.toVector.flatMap { bodyBytes =>
+      val bodyArray = bodyBytes.toArray
+      val bodyPreviewString = new String(bodyArray.take(200), "UTF-8")
+      logger.info(s"Body preview (first 200 bytes): $bodyPreviewString")
+      
+      // Check if the body actually contains multipart data regardless of Content-Type header
+      val isActuallyMultipart = bodyPreviewString.contains("------") || bodyPreviewString.contains("Content-Disposition:")
+      
+      if (isActuallyMultipart) {
+        logger.info("Detected multipart content in body, treating as multipart upload")
+        // Extract boundary from the body itself
+        val boundaryMatch = """--([a-zA-Z0-9\-_]+)""".r.findFirstMatchIn(bodyPreviewString)
+        boundaryMatch match {
+          case Some(m) =>
+            val boundary = m.group(1)
+            logger.info(s"Extracted boundary from body: $boundary")
+            processMultipartWithBytes(bodyArray, user, examId, boundary, fileType)
+          case None =>
+            logger.error("Could not extract boundary from multipart body")
+            BadRequest(ApiResponse.error("无法从multipart请求中提取boundary"))
+        }
+      } else {
+        logger.info("Body does not appear to be multipart, attempting JSON parse")
+        // Try to parse as JSON
+        val bodyString = new String(bodyArray, "UTF-8")
+        logger.info(s"Attempting to parse JSON body: ${bodyString.take(500)}")
+        
+        // Parse JSON manually to handle the case where content-type is wrong
+        parseJsonFileUpload(bodyString) match {
+          case Right((fileContent, originalName)) =>
+            logger.info(s"Successfully parsed JSON upload: filename=$originalName")
+            processJsonFileUpload(fileContent, originalName, user, examId, fileType)
+          case Left(error) =>
+            logger.error(s"Failed to parse as JSON: $error")
+            BadRequest(ApiResponse.error(s"无法解析请求数据: $error"))
+        }
+      }
+    }.handleErrorWith { error =>
+      logger.error(s"Error in handleUploadSpecificFileType: ${error.getMessage}", error)
+      InternalServerError(ApiResponse.error(s"文件上传处理失败: ${error.getMessage}"))
+    }
+  }
+
+  private def handleMultipartFileUploadWithType(req: Request[IO], user: JwtPayload, examId: String, boundary: String, fileType: String): IO[Response[IO]] = {
+    logger.info(s"Processing multipart upload with boundary: $boundary, fileType: $fileType")
+    
+    // Read the raw body as bytes
+    req.body.compile.toVector.flatMap { bodyBytes =>
+      logger.info(s"Received multipart body length: ${bodyBytes.length}")
+      
+      // Parse multipart data as raw bytes instead of converting to string
+      val result = try {
+        logger.info(s"Starting multipart parsing with boundary: --$boundary")
+        val boundaryBytes = s"--$boundary".getBytes("UTF-8")
+        val bodyArray = bodyBytes.toArray
+        
+        var fileName: Option[String] = None
+        var fileBytes: Option[Array[Byte]] = None
+        var fileTypeDetected: Option[String] = None
+        
+        // Split by boundary in byte array
+        val parts = splitBytesByBoundary(bodyArray, boundaryBytes)
+        logger.info(s"Split into ${parts.length} parts")
+        
+        for ((part, index) <- parts.zipWithIndex) {
+          logger.debug(s"Processing part $index (length: ${part.length})")
+          
+          // Find the end of headers (first occurrence of \r\n\r\n)
+          val headerEndPattern = "\r\n\r\n".getBytes("UTF-8")
+          val headerEndIndex = indexOfByteSequence(part, headerEndPattern)
+          
+          if (headerEndIndex >= 0) {
+            // Only convert headers to string, keep binary data as bytes
+            val headersBytes = part.slice(0, headerEndIndex)
+            val headersString = new String(headersBytes, "UTF-8")
+            
+            if (headersString.contains("Content-Disposition: form-data")) {
+              logger.debug(s"Found form-data part $index")
+              
+              if (headersString.contains("name=\"file\"")) {
+                logger.info(s"Found file part at index $index")
+                // Extract filename from headers
+                val lines = headersString.split("\r\n")
+                for (line <- lines) {
+                  if (line.contains("filename=")) {
+                    val filenameMatch = """filename="([^"]+)"""".r
+                    filenameMatch.findFirstMatchIn(line) match {
+                      case Some(m) => 
+                        fileName = Some(m.group(1))
+                        logger.info(s"Extracted filename: ${fileName.get}")
+                      case None => 
+                        logger.warn(s"Could not extract filename from line: $line")
+                    }
+                  }
+                }
+                
+                // Extract binary data (everything after \r\n\r\n)
+                val binaryStartIndex = headerEndIndex + headerEndPattern.length
+                val binaryEndIndex = findBoundaryInBytes(part, boundaryBytes, binaryStartIndex)
+                
+                if (binaryEndIndex > binaryStartIndex) {
+                  fileBytes = Some(part.slice(binaryStartIndex, binaryEndIndex))
+                  logger.info(s"Extracted file bytes: ${fileBytes.get.length} bytes")
+                  logger.debug(s"File content preview (first 50 bytes): ${fileBytes.get.take(50).map(b => f"$b%02x").mkString(" ")}")
+                } else {
+                  fileBytes = Some(part.slice(binaryStartIndex, part.length))
+                  logger.info(s"Extracted file bytes (no end boundary): ${fileBytes.get.length} bytes")
+                }
+              } else if (headersString.contains("name=\"fileType\"")) {
+                logger.info(s"Found fileType part at index $index")
+                // Extract file type value
+                val binaryStartIndex = headerEndIndex + headerEndPattern.length
+                val valueBytes = part.slice(binaryStartIndex, part.length)
+                val value = new String(valueBytes, "UTF-8").trim.replaceAll(s"\\r\\n--$boundary.*", "")
+                fileTypeDetected = Some(value)
+                logger.info(s"Extracted fileType: ${fileTypeDetected.get}")
+              }
+            }
+          }
+        }
+        
+        logger.info(s"Multipart parsing complete - fileName: $fileName, fileBytes length: ${fileBytes.map(_.length)}, fileType: $fileTypeDetected")
+        
+        Right((fileName, fileBytes, fileTypeDetected))
+      } catch {
+        case ex: Exception =>
+          logger.error(s"Multipart parsing error: ${ex.getMessage}", ex)
+          Left(s"解析multipart数据失败: ${ex.getMessage}")
+      }
+      
+      result match {
+        case Right((Some(name), Some(bytes), typeOpt)) =>
+          val finalFileType = fileType // Use the specific file type from the endpoint
+          logger.info(s"Successfully parsed multipart data - file: $name, size: ${bytes.length}, type: $finalFileType")
+          
+          // Validate file upload
+          validateFileUpload(name, bytes.length.toLong, finalFileType).flatMap { _ =>
+            logger.info(s"File validation passed")
+            
+            // Create upload request for FileStorageService
+            val uploadRequest = FileStorageUploadRequest(
+              originalName = name,
+              fileContent = Base64.getEncoder.encodeToString(bytes), // Use Base64 to preserve byte encoding
+              fileType = extractFileExtension(name),
+              mimeType = detectMimeType(name),
+              uploadUserId = user.username,
+              uploadUserType = "admin",
+              examId = Some(examId),
+              submissionId = None,
+              description = Some(s"考试${finalFileType}文件"),
+              category = "exam"
+            )
+            
+            logger.info(s"Created FileStorageUploadRequest for file: $name")
+            
+            // Call FileStorageService
+            fileStorageService.uploadFile(uploadRequest).flatMap { storageResponse =>
+              logger.info(s"FileStorageService response: success=${storageResponse.success}, fileId=${storageResponse.fileId}, message=${storageResponse.message}")
+              
+              if (storageResponse.success) {
+                val fileId = storageResponse.fileId.getOrElse("unknown")
+                val fileUrl = storageResponse.url.getOrElse("")
+                
+                logger.info(s"Saving exam file info to database: examId=$examId, fileId=$fileId, fileType=$finalFileType")
+                
+                // Save file information to local exam_files table
+                val saveFileInfo = examService.saveExamFile(
+                  examId = examId,
+                  fileId = fileId,
+                  fileName = name,
+                  originalName = name,
+                  fileUrl = fileUrl,
+                  fileSize = bytes.length.toLong,
+                  fileType = finalFileType,
+                  mimeType = detectMimeType(name),
+                  uploadedBy = user.username
+                )
+                
+                saveFileInfo.flatMap { saved =>
+                  logger.info(s"Exam file info saved to database: success=$saved")
+                  
+                  if (saved) {
+                    val fileResponse = ExamFileUploadResponse(
+                      fileId = fileId,
+                      originalName = name,
+                      url = fileUrl,
+                      size = bytes.length.toLong,
+                      uploadTime = java.time.LocalDateTime.now().toString
+                    )
+                    Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+                  } else {
+                    logger.warn(s"File uploaded to storage but failed to save metadata for exam $examId")
+                    // Still return success since the file was uploaded successfully
+                    val fileResponse = ExamFileUploadResponse(
+                      fileId = fileId,
+                      originalName = name,
+                      url = fileUrl,
+                      size = bytes.length.toLong,
+                      uploadTime = java.time.LocalDateTime.now().toString
+                    )
+                    Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+                  }
+                }
+              } else {
+                logger.error(s"FileStorageService upload failed: ${storageResponse.message}")
+                BadRequest(ApiResponse.error(storageResponse.message.getOrElse("文件上传失败")))
+              }
+            }
+          }
+        case Right(_) =>
+          BadRequest(ApiResponse.error("无法从multipart请求中提取文件数据"))
+        case Left(errorMsg) =>
+          BadRequest(ApiResponse.error(errorMsg))
+      }
+    }.handleErrorWith { error =>
+      logger.error(s"Error in handleMultipartFileUpload: ${error.getMessage}", error)
+      InternalServerError(ApiResponse.error(s"文件上传处理失败: ${error.getMessage}"))
+    }
+  }
+
   // Utility functions for multipart parsing
   private def splitBytesByBoundary(data: Array[Byte], boundary: Array[Byte]): Array[Array[Byte]] = {
     val parts = scala.collection.mutable.ListBuffer[Array[Byte]]()
@@ -924,6 +1168,105 @@ class ExamController(
     }
   }
 
+  private def handleJsonFileUploadWithType(req: Request[IO], user: JwtPayload, examId: String, fileType: String): IO[Response[IO]] = {
+    logger.info(s"Processing JSON file upload with fileType: $fileType")
+    
+    // Try to parse as SimpleJsonFileUploadRequest first, then fall back to JsonFileUploadRequest
+    req.attemptAs[SimpleJsonFileUploadRequest].value.flatMap {
+      case Right(uploadReq) =>
+        logger.info(s"Successfully parsed as SimpleJsonFileUploadRequest: ${uploadReq.originalName}")
+        processJsonFileUpload(uploadReq.fileContent, uploadReq.originalName, user, examId, fileType)
+      case Left(_) =>
+        logger.info("Failed to parse as SimpleJsonFileUploadRequest, trying JsonFileUploadRequest")
+        req.as[JsonFileUploadRequest].flatMap { uploadReq =>
+          logger.info(s"Successfully parsed as JsonFileUploadRequest: ${uploadReq.originalName}")
+          processJsonFileUpload(uploadReq.fileContent, uploadReq.originalName, user, examId, fileType)
+        }
+    }.handleErrorWith { error =>
+      logger.error(s"JSON file upload error: ${error.getMessage}", error)
+      BadRequest(ApiResponse.error(s"文件上传失败: ${error.getMessage}"))
+    }
+  }
+
+  private def processJsonFileUpload(fileContent: String, originalName: String, user: JwtPayload, examId: String, fileType: String): IO[Response[IO]] = {
+    for {
+      // Decode base64 file content
+      fileBytes <- IO {
+        Base64.getDecoder.decode(fileContent)
+      }.handleErrorWith { error =>
+        IO.raiseError(new RuntimeException(s"Invalid base64 content: ${error.getMessage}"))
+      }
+      
+      // Validate file upload
+      _ <- validateFileUpload(originalName, fileBytes.length.toLong, fileType)
+      
+      // Prepare upload request for FileStorageService
+      uploadRequest = FileStorageUploadRequest(
+        originalName = originalName,
+        fileContent = Base64.getEncoder.encodeToString(fileBytes), // Use Base64 to preserve byte encoding
+        fileType = extractFileExtension(originalName),
+        mimeType = detectMimeType(originalName),
+        uploadUserId = user.username,
+        uploadUserType = "admin",
+        examId = Some(examId),
+        submissionId = None,
+        description = Some(s"考试${fileType}文件"),
+        category = "exam"
+      )
+      
+      // Call FileStorageService
+      storageResponse <- fileStorageService.uploadFile(uploadRequest)
+      
+      response <- if (storageResponse.success) {
+        val fileId = storageResponse.fileId.getOrElse("unknown")
+        val fileUrl = storageResponse.url.getOrElse("")
+        
+        logger.info(s"Saving exam file info to database: examId=$examId, fileId=$fileId, fileType=$fileType")
+        
+        // Save file information to local exam_files table
+        val saveFileInfo = examService.saveExamFile(
+          examId = examId,
+          fileId = fileId,
+          fileName = originalName,
+          originalName = originalName,
+          fileUrl = fileUrl,
+          fileSize = fileBytes.length.toLong,
+          fileType = fileType,
+          mimeType = detectMimeType(originalName),
+          uploadedBy = user.username
+        )
+        
+        saveFileInfo.flatMap { saved =>
+          logger.info(s"Exam file info saved to database: success=$saved")
+          
+          if (saved) {
+            val fileResponse = ExamFileUploadResponse(
+              fileId = fileId,
+              originalName = originalName,
+              url = fileUrl,
+              size = fileBytes.length.toLong,
+              uploadTime = java.time.LocalDateTime.now().toString
+            )
+            Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+          } else {
+            logger.warn(s"File uploaded to storage but failed to save metadata for exam $examId")
+            // Still return success since the file was uploaded successfully
+            val fileResponse = ExamFileUploadResponse(
+              fileId = fileId,
+              originalName = originalName,
+              url = fileUrl,
+              size = fileBytes.length.toLong,
+              uploadTime = java.time.LocalDateTime.now().toString
+            )
+            Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+          }
+        }
+      } else {
+        BadRequest(ApiResponse.error(storageResponse.message.getOrElse("文件上传失败")))
+      }
+    } yield response
+  }
+
   private def handleUploadAnswerImage(req: Request[IO], user: JwtPayload): IO[Response[IO]] = {
     // TODO: Implement proper multipart/form-data handling with FileStorageService
     val imageResponse = AnswerImageUploadResponse(
@@ -944,5 +1287,177 @@ class ExamController(
       uploadTime = java.time.LocalDateTime.now().toString
     )
     Ok(ApiResponse.success(imageResponse, "教练答案图片上传成功"))
+  }
+
+  private def parseJsonFileUpload(jsonString: String): Either[String, (String, String)] = {
+    try {
+      import io.circe.parser._
+      parse(jsonString) match {
+        case Right(json) =>
+          val cursor = json.hcursor
+          
+          // Try to extract fileContent and originalName from different possible structures
+          val fileContent = cursor.downField("fileContent").as[String]
+            .orElse(cursor.downField("file").as[String])
+            .orElse(cursor.downField("content").as[String])
+          
+          val originalName = cursor.downField("originalName").as[String]
+            .orElse(cursor.downField("fileName").as[String])
+            .orElse(cursor.downField("name").as[String])
+          
+          (fileContent, originalName) match {
+            case (Right(content), Right(name)) => Right((content, name))
+            case (Left(_), _) => Left("Missing fileContent field in JSON")
+            case (_, Left(_)) => Left("Missing originalName field in JSON")
+          }
+        case Left(error) => Left(s"Invalid JSON: ${error.getMessage}")
+      }
+    } catch {
+      case ex: Exception => Left(s"JSON parsing error: ${ex.getMessage}")
+    }
+  }
+
+  private def processMultipartWithBytes(bodyArray: Array[Byte], user: JwtPayload, examId: String, boundary: String, fileType: String): IO[Response[IO]] = {
+    logger.info(s"Processing multipart data with boundary: $boundary")
+    
+    // Parse multipart data as raw bytes
+    val result = try {
+      logger.info(s"Starting multipart parsing with boundary: --$boundary")
+      val boundaryBytes = s"--$boundary".getBytes("UTF-8")
+      
+      var fileName: Option[String] = None
+      var fileBytes: Option[Array[Byte]] = None
+      
+      // Split by boundary in byte array
+      val parts = splitBytesByBoundary(bodyArray, boundaryBytes)
+      logger.info(s"Split into ${parts.length} parts")
+      
+      for ((part, index) <- parts.zipWithIndex) {
+        logger.debug(s"Processing part $index (length: ${part.length})")
+        
+        // Find the end of headers (first occurrence of \r\n\r\n)
+        val headerEndPattern = "\r\n\r\n".getBytes("UTF-8")
+        val headerEndIndex = indexOfByteSequence(part, headerEndPattern)
+        
+        if (headerEndIndex >= 0) {
+          // Only convert headers to string, keep binary data as bytes
+          val headersBytes = part.slice(0, headerEndIndex)
+          val headersString = new String(headersBytes, "UTF-8")
+          
+          if (headersString.contains("Content-Disposition: form-data")) {
+            logger.debug(s"Found form-data part $index")
+            
+            if (headersString.contains("name=\"file\"")) {
+              logger.info(s"Found file part at index $index")
+              // Extract filename from headers
+              val lines = headersString.split("\r\n")
+              for (line <- lines) {
+                if (line.contains("filename=")) {
+                  val filenameMatch = """filename="([^"]+)"""".r
+                  filenameMatch.findFirstMatchIn(line) match {
+                    case Some(m) => 
+                      fileName = Some(m.group(1))
+                      logger.info(s"Extracted filename: ${fileName.get}")
+                    case None => 
+                      logger.warn(s"Could not extract filename from line: $line")
+                  }
+                }
+              }
+              
+              // Extract binary data (everything after \r\n\r\n)
+              val binaryStartIndex = headerEndIndex + headerEndPattern.length
+              val binaryEndIndex = findBoundaryInBytes(part, boundaryBytes, binaryStartIndex)
+              
+              if (binaryEndIndex > binaryStartIndex) {
+                fileBytes = Some(part.slice(binaryStartIndex, binaryEndIndex))
+                logger.info(s"Extracted file bytes: ${fileBytes.get.length} bytes")
+              } else {
+                fileBytes = Some(part.slice(binaryStartIndex, part.length))
+                logger.info(s"Extracted file bytes (no end boundary): ${fileBytes.get.length} bytes")
+              }
+            }
+          }
+        }
+      }
+      
+      logger.info(s"Multipart parsing complete - fileName: $fileName, fileBytes length: ${fileBytes.map(_.length)}")
+      
+      Right((fileName, fileBytes))
+    } catch {
+      case ex: Exception =>
+        logger.error(s"Multipart parsing error: ${ex.getMessage}", ex)
+        Left(s"解析multipart数据失败: ${ex.getMessage}")
+    }
+    
+    result match {
+      case Right((Some(name), Some(bytes))) =>
+        logger.info(s"Successfully parsed multipart data - file: $name, size: ${bytes.length}, type: $fileType")
+        
+        // Validate file upload
+        validateFileUpload(name, bytes.length.toLong, fileType).flatMap { _ =>
+          logger.info(s"File validation passed")
+          
+          // Create upload request for FileStorageService
+          val uploadRequest = FileStorageUploadRequest(
+            originalName = name,
+            fileContent = Base64.getEncoder.encodeToString(bytes),
+            fileType = extractFileExtension(name),
+            mimeType = detectMimeType(name),
+            uploadUserId = user.username,
+            uploadUserType = "admin",
+            examId = Some(examId),
+            submissionId = None,
+            description = Some(s"考试${fileType}文件"),
+            category = "exam"
+          )
+          
+          logger.info(s"Created FileStorageUploadRequest for file: $name")
+          
+          // Call FileStorageService
+          fileStorageService.uploadFile(uploadRequest).flatMap { storageResponse =>
+            logger.info(s"FileStorageService response: success=${storageResponse.success}, fileId=${storageResponse.fileId}, message=${storageResponse.message}")
+            
+            if (storageResponse.success) {
+              val fileId = storageResponse.fileId.getOrElse("unknown")
+              val fileUrl = storageResponse.url.getOrElse("")
+              
+              logger.info(s"Saving exam file info to database: examId=$examId, fileId=$fileId, fileType=$fileType")
+              
+              // Save file information to local exam_files table
+              val saveFileInfo = examService.saveExamFile(
+                examId = examId,
+                fileId = fileId,
+                fileName = name,
+                originalName = name,
+                fileUrl = fileUrl,
+                fileSize = bytes.length.toLong,
+                fileType = fileType,
+                mimeType = detectMimeType(name),
+                uploadedBy = user.username
+              )
+              
+              saveFileInfo.flatMap { saved =>
+                logger.info(s"Exam file info saved to database: success=$saved")
+                
+                val fileResponse = ExamFileUploadResponse(
+                  fileId = fileId,
+                  originalName = name,
+                  url = fileUrl,
+                  size = bytes.length.toLong,
+                  uploadTime = java.time.LocalDateTime.now().toString
+                )
+                Ok(ApiResponse.success(fileResponse, "文件上传成功"))
+              }
+            } else {
+              logger.error(s"FileStorageService upload failed: ${storageResponse.message}")
+              BadRequest(ApiResponse.error(storageResponse.message.getOrElse("文件上传失败")))
+            }
+          }
+        }
+      case Right(_) =>
+        BadRequest(ApiResponse.error("无法从multipart请求中提取文件数据"))
+      case Left(errorMsg) =>
+        BadRequest(ApiResponse.error(errorMsg))
+    }
   }
 }

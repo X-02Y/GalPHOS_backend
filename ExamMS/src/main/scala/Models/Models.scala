@@ -272,6 +272,11 @@ case class JsonFileUploadRequest(
   fileType: String // "question", "answer", "answerSheet"
 )
 
+case class SimpleJsonFileUploadRequest(
+  fileContent: String, // Base64 encoded file content
+  originalName: String
+)
+
 case class ImageUploadRequest(
   file: Array[Byte],
   examId: String,
