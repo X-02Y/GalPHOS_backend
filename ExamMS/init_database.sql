@@ -1,6 +1,10 @@
 -- 考试管理服务数据库初始化脚本
 -- 创建考试管理相关的表结构
 
+-- 创建schema
+CREATE SCHEMA IF NOT EXISTS examservice;
+SET search_path TO examservice;
+
 -- 创建考试表
 CREATE TABLE IF NOT EXISTS exams (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -14,6 +18,7 @@ CREATE TABLE IF NOT EXISTS exams (
     created_by VARCHAR(100) NOT NULL,
     duration INTEGER, -- 考试时长（分钟）
     total_questions INTEGER,
+    total_score DECIMAL(10,2),
     max_score DECIMAL(10,2),
     subject VARCHAR(100),
     instructions TEXT,

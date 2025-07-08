@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  grading-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: galphos-grading-service
+    ports:
+      - "3005:3005"
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m
+      - SBT_OPTS=-Xmx1g -XX:+UseG1GC
+    depends_on:
+      - postgres
+    networks:
+      - galphos-network
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  postgres:
+    image: postgres:15
+    container_name: galphos-postgres
+    environment:
+      POSTGRES_DB: galphos
+      POSTGRES_USER: db
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init_database.sql:/docker-entrypoint-initdb.d/init_database.sql
+    networks:
+      - galphos-network
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+
+networks:
+  galphos-network:
+    driver: bridge
