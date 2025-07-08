@@ -33,6 +33,7 @@ trait ExamService {
     mimeType: String,
     uploadedBy: String
   ): IO[Boolean]
+  def getGraderExamInfo(): IO[List[GraderExamInfo]]
 }
 
 class ExamServiceImpl extends ExamService {
@@ -439,6 +440,41 @@ class ExamServiceImpl extends ExamService {
     } yield insertResult > 0).handleErrorWith { error =>
       logger.error(s"Error saving exam file: ${error.getMessage}", error)
       IO.raiseError(error)
+    }
+  }
+
+  override def getGraderExamInfo(): IO[List[GraderExamInfo]] = {
+    logger.info("Getting grader exam information for published exams")
+    
+    val sql = """
+      SELECT DISTINCT 
+        e.id as exam_id,
+        e.total_questions,
+        s.student_username
+      FROM exams e
+      LEFT JOIN exam_submissions s ON e.id = s.exam_id
+      WHERE e.status = 'Published'
+      ORDER BY e.id, s.student_username
+    """
+
+    DatabaseUtils.executeQuery(sql) { rs =>
+      (
+        rs.getString("exam_id"),
+        Option(rs.getInt("total_questions")).filter(_ > 0).getOrElse(0),
+        Option(rs.getString("student_username"))
+      )
+    }.map { results =>
+      // Group by exam_id and collect student IDs
+      val grouped = results.groupBy(_._1)
+      grouped.map { case (examId, rows) =>
+        val totalQuestions = rows.head._2
+        val studentIds = rows.flatMap(_._3).distinct.toList
+        GraderExamInfo(
+          examId = examId,
+          studentIds = studentIds,
+          totalQuestions = totalQuestions
+        )
+      }.toList
     }
   }
 }

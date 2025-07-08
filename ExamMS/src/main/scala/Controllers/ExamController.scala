@@ -8,6 +8,7 @@ import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.Authorization
+import org.http4s.util.CaseInsensitiveString
 import org.slf4j.LoggerFactory
 import Models.*
 import Services.*
@@ -231,6 +232,14 @@ class ExamController(
     case req @ POST -> Root / "api" / "coach" / "exams" / examId / "upload-answer" =>
       authenticateCoach(req) { user =>
         handleCoachUploadAnswerImage(req, user)
+      }.map(_.withHeaders(corsHeaders))
+
+    // ===================== 内部 API =====================
+    
+    // 评卷员内部API - 获取考试信息
+    case req @ GET -> Root / "api" / "internal" / "grader" / "exams" =>
+      authenticateInternalApiKey(req) { _ =>
+        handleGetGraderExamInfo()
       }.map(_.withHeaders(corsHeaders))
 
     // ===================== 健康检查 API =====================
@@ -1458,6 +1467,32 @@ class ExamController(
         BadRequest(ApiResponse.error("无法从multipart请求中提取文件数据"))
       case Left(errorMsg) =>
         BadRequest(ApiResponse.error(errorMsg))
+    }
+  }
+
+  // 内部API处理方法
+  private def handleGetGraderExamInfo(): IO[Response[IO]] = {
+    examService.getGraderExamInfo().flatMap { graderExamInfoList =>
+      Ok(ApiResponse.success(graderExamInfoList, "评卷员考试信息获取成功"))
+    }.handleErrorWith { error =>
+      logger.error("获取评卷员考试信息失败", error)
+      InternalServerError(ApiResponse.error("获取评卷员考试信息失败"))
+    }
+  }
+
+  // 内部API认证方法
+  private def authenticateInternalApiKey(req: Request[IO])(handler: Unit => IO[Response[IO]]): IO[Response[IO]] = {
+    req.headers.get(CaseInsensitiveString("X-Internal-API-Key")) match {
+      case Some(apiKey) =>
+        if (apiKey.head.value == "your-internal-api-key-here") {
+          handler(())
+        } else {
+          logger.warn(s"Invalid internal API key: ${apiKey.head.value}")
+          Forbidden(ApiResponse.error("无效的内部API密钥"))
+        }
+      case None =>
+        logger.warn("Missing internal API key")
+        Forbidden(ApiResponse.error("缺少内部API密钥"))
     }
   }
 }

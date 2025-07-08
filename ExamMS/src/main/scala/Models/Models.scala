@@ -517,3 +517,10 @@ case class InternalFileResponse(
   url: Option[String] = None,
   message: Option[String] = None
 )
+
+// Grader internal API models
+case class GraderExamInfo(
+  examId: String,
+  studentIds: List[String],
+  totalQuestions: Int
+)
