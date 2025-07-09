@@ -6,7 +6,7 @@ import java.time.{LocalDateTime, ZonedDateTime}
 
 // 阅卷员信息
 case class Grader(
-  id: Long,
+  id: String, // 改为String类型以支持UUID
   username: String,
   fullName: String,
   email: String,
@@ -16,12 +16,29 @@ case class Grader(
   updatedAt: LocalDateTime
 )
 
+// 阅卷员信息（包含统计数据）- 对应前端GraderInfo
+case class GraderInfo(
+  id: String,
+  username: String,
+  phone: Option[String],
+  status: String, // available, busy, offline
+  currentTasks: Int,    // 阅卷队列数（当前待处理任务数）
+  completedTasks: Int   // 已完成数（已完成的阅卷任务数）
+)
+
+// 已结束考试信息
+case class EndedExamInfo(
+  examId: String,
+  submissionCount: Int,
+  questionCount: Int
+)
+
 // 阅卷任务
 case class GradingTask(
   id: Long,
-  examId: Long,
-  submissionId: Long,
-  graderId: Option[Long],
+  examId: String, // 改为String类型以支持UUID
+  submissionId: String, // 改为String类型以支持UUID
+  graderId: Option[String], // 改为String类型以支持UUID
   questionNumber: Int,
   status: String,
   maxScore: BigDecimal,
@@ -47,7 +64,7 @@ case class QuestionScore(
 
 // 阅卷进度
 case class GradingProgress(
-  examId: Long,
+  examId: String, // 改为String以支持UUID
   totalTasks: Int,
   completedTasks: Int,
   inProgressTasks: Int,
@@ -72,7 +89,7 @@ case class CoachStudent(
 case class ScoreHistory(
   id: Long,
   taskId: Long,
-  graderId: Long,
+  graderId: String, // 改为String类型以支持UUID
   score: BigDecimal,
   feedback: Option[String],
   createdAt: LocalDateTime
@@ -80,9 +97,9 @@ case class ScoreHistory(
 
 // 阅卷任务分配请求
 case class TaskAssignmentRequest(
-  examId: Long,
-  graderId: Long,
-  questionNumbers: List[Int]
+  examId: String, // 改为String类型以支持UUID
+  graderId: String, // UUID字符串
+  questionIds: List[String] // 支持前端的questionIds字段名，改为String列表
 )
 
 // 阅卷任务详情（包含提交信息）
@@ -92,6 +109,26 @@ case class GradingTaskDetail(
   studentName: String,
   submissionContent: Option[String],
   questionScores: List[QuestionScore]
+)
+
+// 管理员阅卷任务视图（包含考试名称和阅卷员姓名）
+case class AdminGradingTask(
+  id: Long,
+  examId: String,
+  examTitle: String, // 考试名称
+  submissionId: String,
+  graderId: Option[String],
+  graderName: Option[String], // 阅卷员姓名
+  questionNumber: Int,
+  status: String,
+  maxScore: Option[BigDecimal],
+  actualScore: Option[BigDecimal],
+  feedback: Option[String],
+  assignedAt: Option[LocalDateTime],
+  startedAt: Option[LocalDateTime],
+  completedAt: Option[LocalDateTime],
+  createdAt: LocalDateTime,
+  updatedAt: LocalDateTime
 )
 
 // 开始阅卷请求
@@ -224,6 +261,9 @@ object Implicits {
   implicit val graderEncoder: Encoder[Grader] = deriveEncoder[Grader]
   implicit val graderDecoder: Decoder[Grader] = deriveDecoder[Grader]
   
+  implicit val graderInfoEncoder: Encoder[GraderInfo] = deriveEncoder[GraderInfo]
+  implicit val graderInfoDecoder: Decoder[GraderInfo] = deriveDecoder[GraderInfo]
+  
   implicit val gradingTaskEncoder: Encoder[GradingTask] = deriveEncoder[GradingTask]
   implicit val gradingTaskDecoder: Decoder[GradingTask] = deriveDecoder[GradingTask]
   
@@ -244,6 +284,9 @@ object Implicits {
   
   implicit val gradingTaskDetailEncoder: Encoder[GradingTaskDetail] = deriveEncoder[GradingTaskDetail]
   implicit val gradingTaskDetailDecoder: Decoder[GradingTaskDetail] = deriveDecoder[GradingTaskDetail]
+  
+  implicit val adminGradingTaskEncoder: Encoder[AdminGradingTask] = deriveEncoder[AdminGradingTask]
+  implicit val adminGradingTaskDecoder: Decoder[AdminGradingTask] = deriveDecoder[AdminGradingTask]
   
   implicit val startGradingRequestEncoder: Encoder[StartGradingRequest] = deriveEncoder[StartGradingRequest]
   implicit val startGradingRequestDecoder: Decoder[StartGradingRequest] = deriveDecoder[StartGradingRequest]

@@ -45,7 +45,7 @@ object GradingServiceApp extends IOApp {
       )
 
       // 创建HTTP应用
-      httpApp = gradingController.allRoutes.orNotFound
+      httpApp = gradingController.allRoutesWithCORS.orNotFound
 
       // 启动服务器
       _ <- EmberServerBuilder.default[IO]

@@ -4,9 +4,9 @@
 -- 1. 阅卷任务表
 CREATE TABLE IF NOT EXISTS grading_tasks (
     id BIGSERIAL PRIMARY KEY,
-    exam_id BIGINT NOT NULL,
+    exam_id VARCHAR(36) NOT NULL, -- UUID类型，引用examservice.exams.id
     submission_id BIGINT NOT NULL,
-    grader_id BIGINT,
+    grader_id VARCHAR(36), -- UUID类型，引用user_table.user_id
     question_number INTEGER NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     max_score DECIMAL(10,2) NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS grading_tasks (
 
 -- 2. 题目分数配置表
 CREATE TABLE IF NOT EXISTS question_scores (
-    exam_id BIGINT NOT NULL,
+    exam_id VARCHAR(36) NOT NULL, -- UUID类型，引用examservice.exams.id
     question_number INTEGER NOT NULL,
     max_score DECIMAL(10,2) NOT NULL,
     question_type VARCHAR(50) NOT NULL DEFAULT 'SUBJECTIVE',
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS coach_students (
 CREATE TABLE IF NOT EXISTS score_history (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL,
-    grader_id BIGINT NOT NULL,
+    grader_id VARCHAR(36) NOT NULL, -- UUID类型，引用user_table.user_id
     question_number INTEGER NOT NULL,
     score DECIMAL(10,2) NOT NULL,
     feedback TEXT,

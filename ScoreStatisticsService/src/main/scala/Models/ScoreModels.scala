@@ -155,6 +155,15 @@ case class DashboardStats(
   performanceMetrics: PerformanceMetrics = PerformanceMetrics()
 )
 
+// 阅卷员仪表板统计数据模型（匹配前端期望的数据结构）
+case class GraderDashboardStats(
+  totalTasks: Int,
+  completedTasks: Int,
+  pendingTasks: Int,
+  totalScores: Int,
+  recentActivities: List[RecentActivity] = List.empty
+)
+
 // 学生成绩响应模型
 case class StudentScoreResponse(
   examId: Int,

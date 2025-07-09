@@ -7,8 +7,8 @@ lazy val root = (project in file("."))
   .settings(
     name := "FileStorageService",
     
-    // Reduce sbt logging noise
-    logLevel := Level.Warn,
+    // Set sbt logging level to Info to show more details
+    logLevel := Level.Info,
     
     // Fork the JVM to prevent IOApp warnings and enable clean shutdown
     Compile / run / fork := true,

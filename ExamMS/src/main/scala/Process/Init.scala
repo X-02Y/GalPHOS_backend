@@ -36,32 +36,8 @@ object Init {
   }
 
   def createDefaultData(): IO[Unit] = {
-    logger.info("创建默认数据...")
-    
-    val defaultExamSql = """
-      INSERT INTO exams (title, description, start_time, end_time, status, created_by, duration, total_questions, max_score, subject)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT DO NOTHING
-    """
-
-    val defaultExams = List(
-      ("物理竞赛模拟考试", "2024年物理竞赛模拟考试", "2024-04-01 09:00:00", "2024-04-01 12:00:00", "draft", "admin", 180, 20, 100.0, "物理"),
-      ("数学竞赛模拟考试", "2024年数学竞赛模拟考试", "2024-04-02 09:00:00", "2024-04-02 11:00:00", "draft", "admin", 120, 15, 75.0, "数学"),
-      ("化学竞赛模拟考试", "2024年化学竞赛模拟考试", "2024-04-03 09:00:00", "2024-04-03 11:30:00", "draft", "admin", 150, 18, 90.0, "化学")
-    )
-
-    defaultExams.traverse { exam =>
-      val params = List(exam._1, exam._2, exam._3, exam._4, exam._5, exam._6, exam._7, exam._8, exam._9, exam._10)
-      DatabaseUtils.executeUpdate(defaultExamSql, params).handleErrorWith { error =>
-        logger.warn(s"创建默认考试失败: ${exam._1}", error)
-        IO.pure(0)
-      }
-    }.map { results =>
-      logger.info(s"默认数据创建完成，创建了 ${results.count(_ > 0)} 个考试")
-    }.handleErrorWith { error =>
-      logger.error("创建默认数据失败", error)
-      IO.raiseError(error)
-    }
+    logger.info("跳过创建默认数据（已移除模拟数据）...")
+    IO.unit
   }
 
   def checkDatabaseConnection(): IO[Boolean] = {

@@ -27,6 +27,14 @@ class ScoreStatisticsController(scoreService: ScoreStatisticsService) {
   // 学生成绩相关路由
   private val studentRoutes = HttpRoutes.of[IO] {
     
+    // OPTIONS 请求处理
+    case OPTIONS -> _ => 
+      Ok().map(_.withHeaders(Headers(
+        Header.Raw(CIString("Access-Control-Allow-Origin"), "*"),
+        Header.Raw(CIString("Access-Control-Allow-Methods"), "GET, POST, PUT, DELETE, OPTIONS"),
+        Header.Raw(CIString("Access-Control-Allow-Headers"), "Content-Type, Authorization")
+      )))
+    
     // GET /api/student/exams/{examId}/score
     case GET -> Root / "student" / "exams" / IntVar(examId) / "score" => 
       val studentId = 1 // 从JWT token中获取
@@ -174,6 +182,13 @@ class ScoreStatisticsController(scoreService: ScoreStatisticsService) {
 
   // 健康检查路由
   private val healthRoutes = HttpRoutes.of[IO] {
+    case OPTIONS -> _ => 
+      Ok().map(_.withHeaders(Headers(
+        Header.Raw(CIString("Access-Control-Allow-Origin"), "*"),
+        Header.Raw(CIString("Access-Control-Allow-Methods"), "GET, POST, PUT, DELETE, OPTIONS"),
+        Header.Raw(CIString("Access-Control-Allow-Headers"), "Content-Type, Authorization")
+      )))
+      
     case GET -> Root / "health" => 
       Ok(Json.obj(
         "status" -> Json.fromString("ok"),

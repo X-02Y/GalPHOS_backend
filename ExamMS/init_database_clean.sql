@@ -128,10 +128,4 @@ CREATE OR REPLACE TRIGGER update_exam_submissions_updated_at
     BEFORE UPDATE ON exam_submissions 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Insert sample data for testing
-INSERT INTO exams (id, title, description, start_time, end_time, status, total_questions, duration, created_by) VALUES
-('550e8400-e29b-41d4-a716-446655440001', 'Sample Physics Exam', 'A sample exam for testing purposes', 
- CURRENT_TIMESTAMP + INTERVAL '1 day', CURRENT_TIMESTAMP + INTERVAL '2 days', 'draft', 10, 90, 'admin')
-ON CONFLICT (id) DO NOTHING;
-
 COMMIT;

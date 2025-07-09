@@ -298,7 +298,10 @@ case class ExamListResponse(
   totalQuestions: Option[Int] = None,
   duration: Option[Int] = None,
   createdAt: LocalDateTime,
-  createdBy: String
+  createdBy: String,
+  participants: List[String] = List.empty, // 参与考试的学生用户名列表
+  maxScore: Option[Double] = None,
+  totalScore: Option[Double] = None
 )
 
 case class QuestionScoresResponse(

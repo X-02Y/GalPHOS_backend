@@ -30,8 +30,8 @@ object Server extends IOApp {
       (for {
         scoreController <- Resource.eval(Init.init(config))
         
-        // 构建HTTP应用 - 暂时不使用CORS
-        httpApp = scoreController.routes.orNotFound
+        // 构建HTTP应用 - 使用CORS
+        httpApp = scoreController.routesWithCORS.orNotFound
 
         // 创建服务器
         server <- EmberServerBuilder.default[IO]

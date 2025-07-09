@@ -112,6 +112,12 @@ class HttpAuthService(config: ServiceConfig) extends AuthService {
   private def validateTokenLocally(token: String): IO[Option[JwtPayload]] = {
     IO {
       try {
+        // Check for null or "null" string
+        if (token == null || token.trim.isEmpty || token.equalsIgnoreCase("null")) {
+          logger.warn(s"Invalid token provided for local validation: [${Option(token).getOrElse("null")}]")
+          return IO.pure(None)
+        }
+        
         pdi.jwt.Jwt.decode(token, jwtSecret, Seq(algorithm)) match {
           case scala.util.Success(decoded) =>
             logger.info(s"JWT decoded successfully: ${decoded.content}")
@@ -169,12 +175,20 @@ class HttpAuthService(config: ServiceConfig) extends AuthService {
 
   private def extractUserIdFromToken(token: String): Option[String] = {
     try {
+      // Check for null or "null" string
+      if (token == null || token.trim.isEmpty || token.equalsIgnoreCase("null")) {
+        logger.warn(s"Invalid token provided: [${Option(token).getOrElse("null")}]")
+        return None
+      }
+      
       pdi.jwt.Jwt.decode(token, jwtSecret, Seq(algorithm)) match {
         case scala.util.Success(decoded) => decoded.subject
         case _ => None
       }
     } catch {
-      case _: Exception => None
+      case ex: Exception => 
+        logger.debug(s"Token decoding failed: ${ex.getMessage}")
+        None
     }
   }
 

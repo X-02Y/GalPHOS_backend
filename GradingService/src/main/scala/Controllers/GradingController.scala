@@ -24,7 +24,18 @@ class GradingController(
 ) {
   private val logger = LoggerFactory.getLogger("GradingController")
 
+  // CORS 支持
+  private val corsHeaders = Headers(
+    "Access-Control-Allow-Origin" -> "*",
+    "Access-Control-Allow-Methods" -> "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers" -> "Content-Type, Authorization"
+  )
+
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    
+    // CORS 预检请求
+    case req @ OPTIONS -> _ =>
+      Ok().map(_.withHeaders(corsHeaders))
     
     // 管理员阅卷员管理
     case GET -> Root / "api" / "admin" / "graders" =>
@@ -36,11 +47,27 @@ class GradingController(
         ).asJson)
       }.handleErrorWith { error =>
         logger.error("获取阅卷员列表失败", error)
-        InternalServerError(ApiResponse[List[Grader]](
+        InternalServerError(ApiResponse[List[GraderInfo]](
           success = false,
           message = s"获取阅卷员列表失败: ${error.getMessage}"
         ).asJson)
-      }
+      }.map(_.withHeaders(corsHeaders))
+
+    // 管理员创建已结束考试的阅卷任务
+    case req @ POST -> Root / "api" / "admin" / "grading" / "create-tasks" =>
+      gradingTaskService.createGradingTasksForCompletedExams().flatMap { createdCount =>
+        Ok(ApiResponse(
+          success = true,
+          message = s"成功为已结束考试创建 $createdCount 个阅卷任务",
+          data = Some(createdCount)
+        ).asJson)
+      }.handleErrorWith { error =>
+        logger.error("创建阅卷任务失败", error)
+        InternalServerError(ApiResponse[Int](
+          success = false,
+          message = s"创建阅卷任务失败: ${error.getMessage}"
+        ).asJson)
+      }.map(_.withHeaders(corsHeaders))
 
     // 管理员阅卷任务分配
     case req @ POST -> Root / "api" / "admin" / "grading" / "assign" =>
@@ -68,7 +95,7 @@ class GradingController(
       }
 
     // 管理员阅卷进度监控
-    case GET -> Root / "api" / "admin" / "grading" / "progress" / LongVar(examId) =>
+    case GET -> Root / "api" / "admin" / "grading" / "progress" / examId =>
       gradingTaskService.getGradingProgress(examId).flatMap { progress =>
         Ok(ApiResponse(
           success = true,
@@ -85,7 +112,7 @@ class GradingController(
 
     // 管理员阅卷任务管理
     case GET -> Root / "api" / "admin" / "grading" / "tasks" =>
-      gradingTaskService.getAllTasks().flatMap { tasks =>
+      gradingTaskService.getAllTasksForAdmin().flatMap { tasks =>
         Ok(ApiResponse(
           success = true,
           message = "获取阅卷任务列表成功",
@@ -93,7 +120,7 @@ class GradingController(
         ).asJson)
       }.handleErrorWith { error =>
         logger.error("获取阅卷任务列表失败", error)
-        InternalServerError(ApiResponse[List[GradingTask]](
+        InternalServerError(ApiResponse[List[AdminGradingTask]](
           success = false,
           message = s"获取阅卷任务列表失败: ${error.getMessage}"
         ).asJson)
@@ -169,10 +196,14 @@ class GradingController(
             ).asJson)
           }
         case None =>
-          BadRequest(ApiResponse[List[GradingTask]](
-            success = false,
-            message = "缺少阅卷员ID参数"
-          ).asJson)
+          // 如果没有graderId参数，返回所有任务（管理员视图）
+          gradingTaskService.getAllTasks().flatMap { tasks =>
+            Ok(ApiResponse(
+              success = true,
+              message = "获取所有阅卷任务列表成功",
+              data = Some(tasks)
+            ).asJson)
+          }
       }
 
     // 阅卷员任务详情
@@ -392,7 +423,7 @@ class GradingController(
   }
 
   // 查询参数提取器
-  object GraderIdQueryParam extends OptionalQueryParamDecoderMatcher[Long]("graderId")
+  object GraderIdQueryParam extends OptionalQueryParamDecoderMatcher[String]("graderId")
   object CoachIdQueryParam extends OptionalQueryParamDecoderMatcher[Long]("coachId")
   object ExamIdQueryParam extends OptionalQueryParamDecoderMatcher[Long]("examId")
   object StudentIdQueryParam extends OptionalQueryParamDecoderMatcher[Long]("studentId")
@@ -410,4 +441,11 @@ class GradingController(
 
   // 合并所有路由
   val allRoutes: HttpRoutes[IO] = routes <+> healthRoutes
+  
+  // 添加CORS支持
+  def allRoutesWithCORS: HttpRoutes[IO] = {
+    allRoutes.map { response =>
+      response.copy(headers = response.headers ++ corsHeaders)
+    }
+  }
 }

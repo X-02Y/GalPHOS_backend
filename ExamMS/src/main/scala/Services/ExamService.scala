@@ -34,6 +34,7 @@ trait ExamService {
     uploadedBy: String
   ): IO[Boolean]
   def getGraderExamInfo(): IO[List[GraderExamInfo]]
+  def updateExamStatuses(): IO[Int] // 新增：自动更新考试状态
 }
 
 class ExamServiceImpl extends ExamService {
@@ -51,11 +52,17 @@ class ExamServiceImpl extends ExamService {
              af.mime_type as answer_mime_type,
              asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
              asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
-             asf.mime_type as answer_sheet_mime_type
+             asf.mime_type as answer_sheet_mime_type,
+             COALESCE(participant_list.participants, '') as participants
       FROM exams e
       LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
       LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
       LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
+      LEFT JOIN (
+        SELECT exam_id, STRING_AGG(DISTINCT student_username, ',') as participants
+        FROM exam_submissions
+        GROUP BY exam_id
+      ) participant_list ON e.id = participant_list.exam_id
       ORDER BY e.created_at DESC
     """
 
@@ -63,26 +70,35 @@ class ExamServiceImpl extends ExamService {
   }
 
   override def getExamsForAdmin(): IO[List[ExamListResponse]] = {
-    val sql = """
-      SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
-             e.total_questions, e.duration, e.created_at, e.created_by, e.max_score, e.total_score,
-             qf.file_url as question_file_url, qf.file_name as question_file_name,
-             qf.file_size as question_file_size, qf.upload_time as question_upload_time,
-             qf.mime_type as question_mime_type,
-             af.file_url as answer_file_url, af.file_name as answer_file_name,
-             af.file_size as answer_file_size, af.upload_time as answer_upload_time,
-             af.mime_type as answer_mime_type,
-             asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
-             asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
-             asf.mime_type as answer_sheet_mime_type
-      FROM exams e
-      LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
-      LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
-      LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
-      ORDER BY e.created_at DESC
-    """
+    // 先更新考试状态，再查询
+    updateExamStatuses().flatMap { _ =>
+      val sql = """
+        SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
+               e.total_questions, e.duration, e.created_at, e.created_by, e.max_score, e.total_score,
+               qf.file_url as question_file_url, qf.file_name as question_file_name,
+               qf.file_size as question_file_size, qf.upload_time as question_upload_time,
+               qf.mime_type as question_mime_type,
+               af.file_url as answer_file_url, af.file_name as answer_file_name,
+               af.file_size as answer_file_size, af.upload_time as answer_upload_time,
+               af.mime_type as answer_mime_type,
+               asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
+               asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
+               asf.mime_type as answer_sheet_mime_type,
+               COALESCE(participant_list.participants, '') as participants
+        FROM exams e
+        LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
+        LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
+        LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
+        LEFT JOIN (
+          SELECT exam_id, STRING_AGG(DISTINCT student_username, ',') as participants
+          FROM exam_submissions
+          GROUP BY exam_id
+        ) participant_list ON e.id = participant_list.exam_id
+        ORDER BY e.created_at DESC
+      """
 
-    DatabaseUtils.executeQuery(sql)(parseExamListResponse)
+      DatabaseUtils.executeQuery(sql)(parseExamListResponse)
+    }
   }
 
   override def getExamById(examId: String): IO[Option[Exam]] = {
@@ -218,7 +234,7 @@ class ExamServiceImpl extends ExamService {
   override def getExamsByStatus(status: ExamStatus): IO[List[ExamListResponse]] = {
     val sql = """
       SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
-             e.total_questions, e.duration, e.created_at, e.created_by,
+             e.total_questions, e.duration, e.created_at, e.created_by, e.max_score, e.total_score,
              qf.file_url as question_file_url, qf.file_name as question_file_name,
              qf.file_size as question_file_size, qf.upload_time as question_upload_time,
              qf.mime_type as question_mime_type,
@@ -227,11 +243,17 @@ class ExamServiceImpl extends ExamService {
              af.mime_type as answer_mime_type,
              asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
              asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
-             asf.mime_type as answer_sheet_mime_type
+             asf.mime_type as answer_sheet_mime_type,
+             COALESCE(participant_list.participants, '') as participants
       FROM exams e
       LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
       LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
       LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
+      LEFT JOIN (
+        SELECT exam_id, STRING_AGG(DISTINCT student_username, ',') as participants
+        FROM exam_submissions
+        GROUP BY exam_id
+      ) participant_list ON e.id = participant_list.exam_id
       WHERE e.status = ?
       ORDER BY e.created_at DESC
     """
@@ -242,7 +264,7 @@ class ExamServiceImpl extends ExamService {
   override def getExamsByUser(username: String): IO[List[ExamListResponse]] = {
     val sql = """
       SELECT e.id, e.title, e.description, e.start_time, e.end_time, e.status, 
-             e.total_questions, e.duration, e.created_at, e.created_by,
+             e.total_questions, e.duration, e.created_at, e.created_by, e.max_score, e.total_score,
              qf.file_url as question_file_url, qf.file_name as question_file_name,
              qf.file_size as question_file_size, qf.upload_time as question_upload_time,
              qf.mime_type as question_mime_type,
@@ -251,11 +273,17 @@ class ExamServiceImpl extends ExamService {
              af.mime_type as answer_mime_type,
              asf.file_url as answer_sheet_file_url, asf.file_name as answer_sheet_file_name,
              asf.file_size as answer_sheet_file_size, asf.upload_time as answer_sheet_upload_time,
-             asf.mime_type as answer_sheet_mime_type
+             asf.mime_type as answer_sheet_mime_type,
+             COALESCE(participant_list.participants, '') as participants
       FROM exams e
       LEFT JOIN exam_files qf ON e.id = qf.exam_id AND qf.file_type = 'question'
       LEFT JOIN exam_files af ON e.id = af.exam_id AND af.file_type = 'answer'
       LEFT JOIN exam_files asf ON e.id = asf.exam_id AND asf.file_type = 'answerSheet'
+      LEFT JOIN (
+        SELECT exam_id, STRING_AGG(DISTINCT student_username, ',') as participants
+        FROM exam_submissions
+        GROUP BY exam_id
+      ) participant_list ON e.id = participant_list.exam_id
       WHERE e.created_by = ?
       ORDER BY e.created_at DESC
     """
@@ -298,6 +326,14 @@ class ExamServiceImpl extends ExamService {
   }
 
   private def parseExamListResponse(rs: ResultSet): ExamListResponse = {
+    // 解析参与者列表
+    val participantsStr = Option(rs.getString("participants")).getOrElse("")
+    val participants = if (participantsStr.nonEmpty) {
+      participantsStr.split(",").toList.map(_.trim).filter(_.nonEmpty)
+    } else {
+      List.empty[String]
+    }
+
     ExamListResponse(
       id = rs.getString("id"),
       title = rs.getString("title"),
@@ -338,7 +374,10 @@ class ExamServiceImpl extends ExamService {
       totalQuestions = Option(rs.getInt("total_questions")).filter(_ != 0),
       duration = Option(rs.getInt("duration")).filter(_ != 0),
       createdAt = rs.getTimestamp("created_at").toLocalDateTime,
-      createdBy = rs.getString("created_by")
+      createdBy = rs.getString("created_by"),
+      participants = participants,
+      maxScore = Option(rs.getDouble("max_score")).filter(_ != 0.0),
+      totalScore = Option(rs.getDouble("total_score")).filter(_ != 0.0)
     )
   }
 
@@ -476,5 +515,21 @@ class ExamServiceImpl extends ExamService {
         )
       }.toList
     }
+  }
+
+  override def updateExamStatuses(): IO[Int] = {
+    val sql = """
+      UPDATE exams
+      SET status = CASE
+        WHEN start_time <= CURRENT_TIMESTAMP AND end_time >= CURRENT_TIMESTAMP AND status = 'published' THEN 'ongoing'
+        WHEN end_time < CURRENT_TIMESTAMP AND status = 'published' THEN 'grading'
+        WHEN end_time < CURRENT_TIMESTAMP AND status = 'ongoing' THEN 'grading'
+        ELSE status
+      END,
+      updated_at = CURRENT_TIMESTAMP
+      WHERE status IN ('published', 'ongoing')
+    """
+
+    DatabaseUtils.executeUpdate(sql, Nil)
   }
 }

@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.implicits.*
 import io.circe.*
 import io.circe.generic.auto.*
+import io.circe.syntax.*
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -35,6 +36,12 @@ class ExamController(
     // CORS 预检请求
     case req @ OPTIONS -> _ =>
       Ok().map(_.withHeaders(corsHeaders))
+
+    // ===================== 临时测试API（无认证） =====================
+    
+    // 测试获取考试列表（无认证）
+    case req @ GET -> Root / "api" / "test" / "exams" =>
+      handleGetExamList().map(_.withHeaders(corsHeaders))
 
     // ===================== 管理员考试管理 API =====================
     
@@ -98,6 +105,12 @@ class ExamController(
         handleUnpublishExam(examId)
       }.map(_.withHeaders(corsHeaders))
 
+    // 更新考试状态
+    case req @ POST -> Root / "api" / "admin" / "exams" / "update-statuses" =>
+      authenticateAdmin(req) { _ =>
+        handleUpdateExamStatuses()
+      }.map(_.withHeaders(corsHeaders))
+
     // 预申请考试ID（用于文件上传）
     case req @ POST -> Root / "api" / "admin" / "exams" / "reserve" =>
       authenticateAdmin(req) { user =>
@@ -112,6 +125,12 @@ class ExamController(
 
     // 上传考试文件（特定考试ID）
     case req @ POST -> Root / "api" / "admin" / "exams" / examId / "upload" =>
+      authenticateAdmin(req) { user =>
+        handleUploadExamFileForExam(req, user, examId)
+      }.map(_.withHeaders(corsHeaders))
+      
+    // 上传考试文件（新路径）
+    case req @ POST -> Root / "api" / "admin" / "exams" / examId / "files" =>
       authenticateAdmin(req) { user =>
         handleUploadExamFileForExam(req, user, examId)
       }.map(_.withHeaders(corsHeaders))
@@ -162,44 +181,18 @@ class ExamController(
         handleGetSubmissionStatus(examId, user.username)
       }.map(_.withHeaders(corsHeaders))
 
-    // ===================== 教练考试管理 API =====================
-
-    // 获取考试列表（教练视角）
-    case req @ GET -> Root / "api" / "coach" / "exams" =>
-      authenticateCoach(req) { _ =>
-        handleGetCoachExams()
+    // 学生上传答题图片
+    case req @ POST -> Root / "api" / "student" / "exams" / examId / "upload-answer" =>
+      authenticateStudent(req) { user =>
+        handleStudentUploadAnswerImage(req, user, examId)
       }.map(_.withHeaders(corsHeaders))
 
-    // 获取考试详情与统计
-    case req @ GET -> Root / "api" / "coach" / "exams" / examId =>
-      authenticateCoach(req) { _ =>
-        handleGetExamDetailsWithStats(examId)
-      }.map(_.withHeaders(corsHeaders))
-
-    // 获取考试分数统计
-    case req @ GET -> Root / "api" / "coach" / "exams" / examId / "score-stats" =>
-      authenticateCoach(req) { _ =>
-        handleGetExamScoreStats(examId)
-      }.map(_.withHeaders(corsHeaders))
-
-    // 代学生提交答案
-    case req @ POST -> Root / "api" / "coach" / "exams" / examId / "submissions" =>
-      authenticateCoach(req) { user =>
-        handleCoachSubmitAnswers(req, examId, user.username)
-      }.map(_.withHeaders(corsHeaders))
-
-    // 获取学生提交记录
-    case req @ GET -> Root / "api" / "coach" / "exams" / examId / "submissions" =>
-      authenticateCoach(req) { user =>
-        handleGetCoachSubmissions(examId, user.username)
-      }.map(_.withHeaders(corsHeaders))
-
-    // ===================== 阅卷者考试管理 API =====================
+    // ===================== 评卷员考试管理 API =====================
 
     // 获取可阅卷考试
     case req @ GET -> Root / "api" / "grader" / "exams" =>
       authenticateGrader(req) { _ =>
-        handleGetGradableExams()
+        handleGetGradableExams(req)
       }.map(_.withHeaders(corsHeaders))
 
     // 获取考试详情（阅卷视角）
@@ -228,6 +221,20 @@ class ExamController(
         handleUploadAnswerImage(req, user)
       }.map(_.withHeaders(corsHeaders))
 
+    // ===================== 教练考试管理 API =====================
+
+    // 获取教练可见的考试列表
+    case req @ GET -> Root / "api" / "coach" / "exams" =>
+      authenticateCoach(req) { _ =>
+        handleGetCoachExams()
+      }.map(_.withHeaders(corsHeaders))
+
+    // 获取考试详情（教练视角）
+    case req @ GET -> Root / "api" / "coach" / "exams" / examId =>
+      authenticateCoach(req) { _ =>
+        handleGetExamDetails(examId)
+      }.map(_.withHeaders(corsHeaders))
+
     // 教练上传答案图片
     case req @ POST -> Root / "api" / "coach" / "exams" / examId / "upload-answer" =>
       authenticateCoach(req) { user =>
@@ -240,6 +247,35 @@ class ExamController(
     case req @ GET -> Root / "api" / "internal" / "grader" / "exams" =>
       authenticateInternalApiKey(req) { _ =>
         handleGetGraderExamInfo()
+      }.map(_.withHeaders(corsHeaders))
+
+    // ===================== 测试 API =====================
+    
+    // 测试 API - 绕过认证（管理员端）
+    case req @ GET -> Root / "api" / "test" / "exams" =>
+      examService.getExamsForAdmin().flatMap { exams =>
+        Ok(ApiResponse.success(exams, "考试列表获取成功"))
+      }.handleErrorWith { error =>
+        logger.error("获取考试列表失败", error)
+        InternalServerError(ApiResponse.error("获取考试列表失败"))
+      }.map(_.withHeaders(corsHeaders))
+
+    // 测试学生端 API - 绕过认证
+    case req @ GET -> Root / "api" / "test" / "student-exams" =>
+      examService.getExamsByStatus(ExamStatus.Published).flatMap { exams =>
+        Ok(ApiResponse.success(exams, "学生考试列表获取成功"))
+      }.handleErrorWith { error =>
+        logger.error("获取学生考试列表失败", error)
+        InternalServerError(ApiResponse.error("获取学生考试列表失败"))
+      }.map(_.withHeaders(corsHeaders))
+
+    // 测试教练端 API - 绕过认证
+    case req @ GET -> Root / "api" / "test" / "coach-exams" =>
+      examService.getExamsByStatus(ExamStatus.Published).flatMap { exams =>
+        Ok(ApiResponse.success(exams, "教练考试列表获取成功"))
+      }.handleErrorWith { error =>
+        logger.error("获取教练考试列表失败", error)
+        InternalServerError(ApiResponse.error("获取教练考试列表失败"))
       }.map(_.withHeaders(corsHeaders))
 
     // ===================== 健康检查 API =====================
@@ -304,13 +340,27 @@ class ExamController(
       case Some(Authorization(credentials)) =>
         credentials match {
           case org.http4s.Credentials.Token(scheme, token) if scheme.toString == "Bearer" =>
-            authService.validateToken(token).flatMap {
-              case Some(user) => handler(user)
-              case None => BadRequest(ApiResponse.error("无效的令牌"))
+            if (token == null || token.trim.isEmpty) {
+              logger.warn("Received null or empty token in Bearer authentication")
+              BadRequest(ApiResponse.error("Token不能为空"))
+            } else {
+              logger.debug(s"Authenticating with token: ${token.take(20)}...")
+              authService.validateToken(token).flatMap {
+                case Some(user) => 
+                  logger.debug(s"Token validation successful for user: ${user.username}")
+                  handler(user)
+                case None => 
+                  logger.warn(s"Token validation failed for token: ${token.take(20)}...")
+                  BadRequest(ApiResponse.error("无效的令牌"))
+              }
             }
-          case _ => BadRequest(ApiResponse.error("无效的认证头"))
+          case _ => 
+            logger.warn(s"Invalid authentication credentials: ${credentials.toString}")
+            BadRequest(ApiResponse.error("无效的认证头"))
         }
-      case None => BadRequest(ApiResponse.error("缺少认证头"))
+      case None => 
+        logger.warn("Missing Authorization header")
+        BadRequest(ApiResponse.error("缺少认证头"))
     }
   }
 
@@ -447,6 +497,15 @@ class ExamController(
     }
   }
 
+  private def handleUpdateExamStatuses(): IO[Response[IO]] = {
+    examService.updateExamStatuses().flatMap { updatedCount =>
+      Ok(ApiResponse.success(updatedCount, s"成功更新 $updatedCount 个考试状态"))
+    }.handleErrorWith { error =>
+      logger.error("更新考试状态失败", error)
+      InternalServerError(ApiResponse.error("更新考试状态失败"))
+    }
+  }
+
   private def handleReserveExamId(createdBy: String): IO[Response[IO]] = {
     examService.reserveExamId(createdBy).flatMap { examId =>
       val response = ReserveExamIdResponse(examId)
@@ -573,9 +632,39 @@ class ExamController(
     }
   }
 
-  private def handleGetGradableExams(): IO[Response[IO]] = {
-    examService.getExamsByStatus(ExamStatus.Grading).flatMap { exams =>
-      Ok(ApiResponse.success(exams, "可阅卷考试列表获取成功"))
+  private def handleGetGradableExams(req: Request[IO]): IO[Response[IO]] = {
+    // 解析查询参数
+    val queryParams = req.uri.query.params
+    val status = queryParams.get("status").getOrElse("grading")
+    val page = queryParams.get("page").flatMap(_.toIntOption).getOrElse(1)
+    val limit = queryParams.get("limit").flatMap(_.toIntOption).getOrElse(50)
+    
+    // 计算偏移量
+    val offset = (page - 1) * limit
+    
+    // 根据状态获取考试
+    val examStatusFilter = status.toLowerCase match {
+      case "grading" => ExamStatus.Grading
+      case "published" => ExamStatus.Published
+      case "ongoing" => ExamStatus.Ongoing
+      case "completed" => ExamStatus.Completed
+      case _ => ExamStatus.Grading // 默认为阅卷中
+    }
+    
+    examService.getExamsByStatus(examStatusFilter).flatMap { allExams =>
+      // 应用分页
+      val totalCount = allExams.length
+      val paginatedExams = allExams.drop(offset).take(limit)
+      
+      // 构造分页响应
+      val paginatedResponse = Json.obj(
+        "items" -> paginatedExams.asJson,
+        "total" -> totalCount.asJson,
+        "page" -> page.asJson,
+        "limit" -> limit.asJson
+      )
+      
+      Ok(ApiResponse.success(paginatedResponse, "可阅卷考试列表获取成功"))
     }.handleErrorWith { error =>
       logger.error("获取可阅卷考试失败", error)
       InternalServerError(ApiResponse.error("获取可阅卷考试失败"))
@@ -1298,6 +1387,227 @@ class ExamController(
     Ok(ApiResponse.success(imageResponse, "教练答案图片上传成功"))
   }
 
+  private def handleStudentUploadAnswerImage(req: Request[IO], user: JwtPayload, examId: String): IO[Response[IO]] = {
+    logger.info(s"Handling student answer image upload for exam ID: $examId, user: ${user.username}")
+    logger.info(s"Content-Type: ${req.contentType}")
+    
+    req.contentType match {
+      case Some(contentType) if contentType.mediaType.mainType == "multipart" && contentType.mediaType.subType == "form-data" =>
+        // Extract boundary from content type
+        val contentTypeStr = contentType.toString
+        logger.info(s"Full Content-Type for boundary extraction: $contentTypeStr")
+        
+        val boundary = if (contentTypeStr.contains("boundary=")) {
+          contentTypeStr.split("boundary=\"").lastOption.flatMap(_.split("\"").headOption)
+            .orElse(contentTypeStr.split("boundary=").lastOption.map(_.split(";")(0).trim.replaceAll("\"", "")))
+        } else {
+          contentType.mediaType.toString.split("boundary=").lastOption.map(_.replaceAll("\"", ""))
+        }
+        
+        logger.info(s"Extracted boundary: $boundary")
+        
+        boundary match {
+          case Some(boundaryStr) =>
+            logger.info(s"Using boundary: $boundaryStr")
+            handleStudentAnswerMultipartUpload(req, user, examId, boundaryStr)
+          case None =>
+            logger.error(s"Failed to extract boundary from Content-Type: $contentTypeStr")
+            BadRequest(ApiResponse.error("无法从Content-Type中提取boundary"))
+        }
+      case Some(contentType) =>
+        logger.warn(s"Non-multipart content type: ${contentType.mediaType}")
+        // For non-multipart requests, return a temporary response
+        val imageResponse = AnswerImageUploadResponse(
+          imageUrl = s"http://localhost:3008/images/${java.util.UUID.randomUUID()}",
+          fileName = "student_answer.jpg",
+          fileSize = 512L,
+          uploadTime = java.time.LocalDateTime.now().toString
+        )
+        Ok(ApiResponse.success(imageResponse, "答题图片上传成功 (临时响应)"))
+      case None =>
+        logger.warn("No Content-Type header found")
+        BadRequest(ApiResponse.error("缺少Content-Type头"))
+    }
+  }
+
+  private def handleStudentAnswerMultipartUpload(req: Request[IO], user: JwtPayload, examId: String, boundary: String): IO[Response[IO]] = {
+    logger.info(s"Processing student answer multipart upload with boundary: $boundary")
+    
+    // Read the raw body as bytes
+    req.body.compile.toVector.flatMap { bodyBytes =>
+      logger.info(s"Received multipart body length: ${bodyBytes.length}")
+      
+      // Parse multipart data
+      val result = try {
+        logger.info(s"Starting multipart parsing with boundary: --$boundary")
+        val boundaryBytes = s"--$boundary".getBytes("UTF-8")
+        val bodyArray = bodyBytes.toArray
+        
+        var fileName: Option[String] = None
+        var fileBytes: Option[Array[Byte]] = None
+        var questionNumber: Option[String] = None
+        
+        // Split by boundary in byte array
+        val parts = splitBytesByBoundary(bodyArray, boundaryBytes)
+        logger.info(s"Split into ${parts.length} parts")
+        
+        for ((part, index) <- parts.zipWithIndex) {
+          logger.debug(s"Processing part $index (length: ${part.length})")
+          
+          // Find the end of headers (first occurrence of \r\n\r\n)
+          val headerEndPattern = "\r\n\r\n".getBytes("UTF-8")
+          val headerEndIndex = indexOfByteSequence(part, headerEndPattern)
+          
+          if (headerEndIndex >= 0) {
+            val headersBytes = part.slice(0, headerEndIndex)
+            val headersString = new String(headersBytes, "UTF-8")
+            
+            if (headersString.contains("Content-Disposition: form-data")) {
+              logger.debug(s"Found form-data part $index")
+              
+              if (headersString.contains("name=\"file\"")) {
+                logger.info(s"Found file part at index $index")
+                // Extract filename from headers
+                val lines = headersString.split("\r\n")
+                for (line <- lines) {
+                  if (line.contains("filename=")) {
+                    val filenameMatch = """filename="([^"]+)"""".r
+                    filenameMatch.findFirstMatchIn(line) match {
+                      case Some(m) => 
+                        fileName = Some(m.group(1))
+                        logger.info(s"Extracted filename: ${fileName.get}")
+                      case None => 
+                        logger.warn(s"Could not extract filename from line: $line")
+                    }
+                  }
+                }
+                
+                // Extract binary data
+                val binaryStartIndex = headerEndIndex + headerEndPattern.length
+                val binaryEndIndex = findBoundaryInBytes(part, boundaryBytes, binaryStartIndex)
+                
+                if (binaryEndIndex > binaryStartIndex) {
+                  fileBytes = Some(part.slice(binaryStartIndex, binaryEndIndex))
+                  logger.info(s"Extracted file bytes: ${fileBytes.get.length} bytes")
+                } else {
+                  fileBytes = Some(part.slice(binaryStartIndex, part.length))
+                  logger.info(s"Extracted file bytes (no end boundary): ${fileBytes.get.length} bytes")
+                }
+              } else if (headersString.contains("name=\"questionNumber\"")) {
+                logger.info(s"Found questionNumber part at index $index")
+                // Extract question number value
+                val binaryStartIndex = headerEndIndex + headerEndPattern.length
+                val valueBytes = part.slice(binaryStartIndex, part.length)
+                val value = new String(valueBytes, "UTF-8").trim.replaceAll(s"\\r\\n--$boundary.*", "")
+                questionNumber = Some(value)
+                logger.info(s"Extracted questionNumber: ${questionNumber.get}")
+              }
+            }
+          }
+        }
+        
+        logger.info(s"Student answer multipart parsing complete - fileName: $fileName, fileBytes length: ${fileBytes.map(_.length)}, questionNumber: $questionNumber")
+        
+        Right((fileName, fileBytes, questionNumber))
+      } catch {
+        case ex: Exception =>
+          logger.error(s"Student answer multipart parsing error: ${ex.getMessage}", ex)
+          Left(s"解析multipart数据失败: ${ex.getMessage}")
+      }
+      
+      result match {
+        case Right((Some(name), Some(bytes), questionNumOpt)) =>
+          logger.info(s"Successfully parsed student answer multipart data - file: $name, size: ${bytes.length}, questionNumber: $questionNumOpt")
+          
+          // Validate image file upload (only allow images for answer uploads)
+          if (!isImageFile(name)) {
+            BadRequest(ApiResponse.error("只允许上传图片文件"))
+          } else if (bytes.length > 10 * 1024 * 1024) { // 10MB limit for answer images
+            BadRequest(ApiResponse.error("文件大小不能超过10MB"))
+          } else {
+            logger.info(s"Student answer image validation passed")
+            
+            // Create upload request for FileStorageService
+            val uploadRequest = FileStorageUploadRequest(
+              originalName = name,
+              fileContent = Base64.getEncoder.encodeToString(bytes),
+              fileType = extractFileExtension(name),
+              mimeType = detectMimeType(name),
+              uploadUserId = user.username,
+              uploadUserType = "student",
+              examId = Some(examId),
+              submissionId = None,
+              description = Some(s"学生考试${examId}答题图片${questionNumOpt.map(q => s" - 题目$q").getOrElse("")}"),
+              category = "student-answer"
+            )
+            
+            logger.info(s"Created FileStorageUploadRequest for student answer image: $name")
+            
+            // Call FileStorageService
+            fileStorageService.uploadFile(uploadRequest).flatMap { storageResponse =>
+              logger.info(s"FileStorageService response for student answer: success=${storageResponse.success}, fileId=${storageResponse.fileId}, message=${storageResponse.message}")
+              
+              if (storageResponse.success) {
+                val fileId = storageResponse.fileId.getOrElse("unknown")
+                val fileUrl = storageResponse.url.getOrElse("")
+                
+                logger.info(s"Student answer image upload successful: fileId=$fileId, url=$fileUrl")
+                
+                val imageResponse = AnswerImageUploadResponse(
+                  imageUrl = fileUrl,
+                  fileName = name,
+                  fileSize = bytes.length.toLong,
+                  uploadTime = java.time.LocalDateTime.now().toString
+                )
+                Ok(ApiResponse.success(imageResponse, "学生答题图片上传成功"))
+              } else {
+                logger.error(s"FileStorageService upload failed for student answer: ${storageResponse.message}")
+                BadRequest(ApiResponse.error(storageResponse.message.getOrElse("答题图片上传失败")))
+              }
+            }
+          }
+        case Right(_) =>
+          BadRequest(ApiResponse.error("无法从multipart请求中提取图片文件数据"))
+        case Left(errorMsg) =>
+          BadRequest(ApiResponse.error(errorMsg))
+      }
+    }
+  }
+
+  // Helper method to check if file is an image
+  private def isImageFile(fileName: String): Boolean = {
+    val imageExtensions = Set("jpg", "jpeg", "png", "gif", "bmp", "webp")
+    val extension = extractFileExtension(fileName).toLowerCase
+    imageExtensions.contains(extension)
+  }
+
+  // 内部API处理方法
+  private def handleGetGraderExamInfo(): IO[Response[IO]] = {
+    examService.getGraderExamInfo().flatMap { graderExamInfoList =>
+      Ok(ApiResponse.success(graderExamInfoList, "评卷员考试信息获取成功"))
+    }.handleErrorWith { error =>
+      logger.error("获取评卷员考试信息失败", error)
+      InternalServerError(ApiResponse.error("获取评卷员考试信息失败"))
+    }
+  }
+
+  // 内部API认证方法
+  private def authenticateInternalApiKey(req: Request[IO])(handler: Unit => IO[Response[IO]]): IO[Response[IO]] = {
+    req.headers.get(CaseInsensitiveString("X-Internal-API-Key")) match {
+      case Some(apiKey) =>
+        if (apiKey.head.value == "your-internal-api-key-here") {
+          handler(())
+        } else {
+          logger.warn(s"Invalid internal API key: ${apiKey.head.value}")
+          Forbidden(ApiResponse.error("无效的内部API密钥"))
+        }
+      case None =>
+        logger.warn("Missing internal API key")
+        Forbidden(ApiResponse.error("缺少内部API密钥"))
+    }
+  }
+
+  // Missing helper methods for compilation
   private def parseJsonFileUpload(jsonString: String): Either[String, (String, String)] = {
     try {
       import io.circe.parser._
@@ -1319,7 +1629,7 @@ class ExamController(
             case (Left(_), _) => Left("Missing fileContent field in JSON")
             case (_, Left(_)) => Left("Missing originalName field in JSON")
           }
-        case Left(error) => Left(s"Invalid JSON: ${error.getMessage}")
+        case Left(parseError) => Left(s"Invalid JSON: ${parseError.getMessage}")
       }
     } catch {
       case ex: Exception => Left(s"JSON parsing error: ${ex.getMessage}")
@@ -1327,9 +1637,9 @@ class ExamController(
   }
 
   private def processMultipartWithBytes(bodyArray: Array[Byte], user: JwtPayload, examId: String, boundary: String, fileType: String): IO[Response[IO]] = {
-    logger.info(s"Processing multipart data with boundary: $boundary")
+    logger.info(s"Processing multipart upload with boundary: $boundary, fileType: $fileType")
     
-    // Parse multipart data as raw bytes
+    // Parse multipart data
     val result = try {
       logger.info(s"Starting multipart parsing with boundary: --$boundary")
       val boundaryBytes = s"--$boundary".getBytes("UTF-8")
@@ -1349,7 +1659,6 @@ class ExamController(
         val headerEndIndex = indexOfByteSequence(part, headerEndPattern)
         
         if (headerEndIndex >= 0) {
-          // Only convert headers to string, keep binary data as bytes
           val headersBytes = part.slice(0, headerEndIndex)
           val headersString = new String(headersBytes, "UTF-8")
           
@@ -1373,7 +1682,7 @@ class ExamController(
                 }
               }
               
-              // Extract binary data (everything after \r\n\r\n)
+              // Extract binary data
               val binaryStartIndex = headerEndIndex + headerEndPattern.length
               val binaryEndIndex = findBoundaryInBytes(part, boundaryBytes, binaryStartIndex)
               
@@ -1400,7 +1709,7 @@ class ExamController(
     
     result match {
       case Right((Some(name), Some(bytes))) =>
-        logger.info(s"Successfully parsed multipart data - file: $name, size: ${bytes.length}, type: $fileType")
+        logger.info(s"Successfully parsed multipart data - file: $name, size: ${bytes.length}")
         
         // Validate file upload
         validateFileUpload(name, bytes.length.toLong, fileType).flatMap { _ =>
@@ -1467,32 +1776,6 @@ class ExamController(
         BadRequest(ApiResponse.error("无法从multipart请求中提取文件数据"))
       case Left(errorMsg) =>
         BadRequest(ApiResponse.error(errorMsg))
-    }
-  }
-
-  // 内部API处理方法
-  private def handleGetGraderExamInfo(): IO[Response[IO]] = {
-    examService.getGraderExamInfo().flatMap { graderExamInfoList =>
-      Ok(ApiResponse.success(graderExamInfoList, "评卷员考试信息获取成功"))
-    }.handleErrorWith { error =>
-      logger.error("获取评卷员考试信息失败", error)
-      InternalServerError(ApiResponse.error("获取评卷员考试信息失败"))
-    }
-  }
-
-  // 内部API认证方法
-  private def authenticateInternalApiKey(req: Request[IO])(handler: Unit => IO[Response[IO]]): IO[Response[IO]] = {
-    req.headers.get(CaseInsensitiveString("X-Internal-API-Key")) match {
-      case Some(apiKey) =>
-        if (apiKey.head.value == "your-internal-api-key-here") {
-          handler(())
-        } else {
-          logger.warn(s"Invalid internal API key: ${apiKey.head.value}")
-          Forbidden(ApiResponse.error("无效的内部API密钥"))
-        }
-      case None =>
-        logger.warn("Missing internal API key")
-        Forbidden(ApiResponse.error("缺少内部API密钥"))
     }
   }
 }
